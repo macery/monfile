@@ -1,0 +1,60 @@
+# monfile configuration (reference / example)
+# Install as /etc/monfile/monfile.toml, owner root:monfile, mode 0640.
+# monfile refuses to start if this file is group/world-writable or not root-owned.
+# Unknown keys are errors. See DESIGN.md §5 for the full schema and validation rules.
+
+[global]
+state_dir             = "/var/lib/monfile"            # state.db (SQLite) lives here
+manifest_dir          = "/var/lib/monfile/manifests"  # per-file manifests, for folders with manifest = true
+scan_interval_seconds = 30                            # how often each folder is polled
+log_level             = "info"                        # debug | info | warning | error
+syslog_facility       = "daemon"                      # syslog facility for audit events
+hash_chunk_bytes      = 1048576                       # read size for SHA-256 hashing
+max_files_per_cycle   = 1000                          # backpressure: max files evaluated per folder per cycle
+
+# ---------------------------------------------------------------------------
+# Folder 1: copy to an outbound share, keep a processed archive, manifests ON
+# (useful during setup/debugging).
+# ---------------------------------------------------------------------------
+[[folder]]
+id             = "inbound-a"              # ^[a-z0-9][a-z0-9_-]{0,63}$, unique; used in logs + manifest path
+path           = "/data/inbound/a"        # absolute; no symlinks in any component
+recursive      = false                    # true = also watch subdirectories
+settle_seconds = 300                      # unchanged for this long before processing (>= 2 x scan interval)
+verify_hash    = true                     # also require SHA-256 equal at start and end of settle window
+skip_empty     = false                    # true = never process zero-byte files
+manifest       = true                     # write a JSON manifest per processed file
+include        = ["*"]                    # fnmatch on file basename
+exclude        = [".*", "*.part", "*.tmp", "~$*", "*.crdownload", "*.filepart"]   # this is the default if omitted
+on_success     = "move"                   # leave | move | delete  (applied only if all actions succeed)
+processed_dir  = "/data/processed/a"      # required when on_success = "move"; must be outside `path`
+# ready_marker = ".done"                  # optional: wait for <name>.done before processing <name>;
+                                          # the marker is deleted after success (DESIGN §4.4)
+
+  [[folder.action]]
+  type        = "copy"
+  destination = "/data/outbound/a"        # must be outside `path`
+  collision   = "suffix"                  # suffix | skip | fail
+
+# ---------------------------------------------------------------------------
+# Folder 2: recursive drop area, files MOVED to staging (tree preserved),
+# large files so start/end hashing is off (destination is still verified),
+# manifests OFF to reduce volume.
+# ---------------------------------------------------------------------------
+[[folder]]
+id             = "bulk-drop"
+path           = "/data/inbound/bulk"
+recursive      = true
+settle_seconds = 600
+verify_hash    = false
+manifest       = false
+include        = ["*"]
+exclude        = [".*", "*.part", "*.tmp"]
+on_success     = "leave"                  # must be "leave" when the chain ends with a move action
+
+  [[folder.action]]
+  type          = "move"
+  destination   = "/data/staging/bulk"
+  collision     = "fail"
+  preserve_tree = true                    # keep relative subdirectory structure
+  mode          = "copy"                  # copy+verify+unlink (default) | rename (same-fs only; keeps SELinux label)

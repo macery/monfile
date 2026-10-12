@@ -1,0 +1,54 @@
+# monfile daemon mode. Enable EITHER this unit OR monfile-scan.timer, not both.
+# Site-specific writable paths go in a drop-in:
+#   systemctl edit monfile.service
+#   [Service]
+#   ReadWritePaths=/data/inbound/a /data/outbound/a /data/processed/a
+[Unit]
+Description=monfile folder monitor (daemon)
+Documentation=file:/opt/monfile/docs/OPERATIONS.md
+After=local-fs.target remote-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=monfile
+Group=monfile
+ExecStart=/opt/monfile/bin/monfile run
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=300
+UMask=0027
+
+StateDirectory=monfile
+StateDirectoryMode=0750
+RuntimeDirectory=monfile
+RuntimeDirectoryMode=0750
+
+# --- Hardening (DESIGN §9, SR-10) ---
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ReadOnlyPaths=/etc/monfile
+
+[Install]
+WantedBy=multi-user.target

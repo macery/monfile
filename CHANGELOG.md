@@ -1,0 +1,16 @@
+# Changelog
+
+All notable changes to this project are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+### Added
+- MIT license (`LICENSE`).
+- Initial project scaffolding: design docs, requirements, ADRs 0001–0008, audit documentation, the third-party inventory, the example config, stub package, systemd units, and install/build script drafts.
+- Optional per-folder `ready_marker` setting (e.g. `.done`): a file is processed only after its marker exists, and the marker is removed on success (ADR-0009). New audit events: `MARKER_SEEN`, `MARKER_ORPHAN`, `MARKER_REMOVED`, `MARKER_REMOVE_FAIL`.
+- Optional per-folder `skip_empty` setting (default `false`), with the `FILE_SKIPPED` event.
+- `FILE_LARGE` warning event for files over 10 GiB (no size limit).
+
+### Decided
+- Watch folders are local disk. Delivered files are mode `0640`. Changed DONE files are reprocessed as new versions. State and manifests are kept indefinitely. Ubuntu universe is allowed for `python3.11` on 22.04. Failure alerting is syslog/SIEM only (DESIGN §13 Q4–Q7, Q9, Q12, Q13).
+- The proposed defaults were accepted for the remaining open questions: 30 s scan interval, the default exclude list, restart-only config reload (SIGHUP ignored), no custom SELinux policy in v1, `move` as copy + verify + unlink, and sequential processing (DESIGN §13 Q1–Q3, Q8, Q10, Q11, Q14, Q15). All design questions are now closed.

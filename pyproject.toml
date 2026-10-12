@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# NOTE: the build backend is only used for optional local dev installs.
+# Delivery is via packaging/build-tarball.sh (ADR-0008), which needs no build deps.
+
+[project]
+name = "monfile"
+dynamic = ["version"]
+description = "Folder monitor that runs auditable workflows on files once they settle."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = []          # stdlib only — see ADR-0001 and THIRD_PARTY.md
+
+[project.scripts]
+monfile = "monfile.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "monfile.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

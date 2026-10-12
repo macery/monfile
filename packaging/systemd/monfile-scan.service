@@ -1,0 +1,45 @@
+# monfile one-shot mode, triggered by monfile-scan.timer.
+# Site-specific writable paths go in a drop-in:  systemctl edit monfile-scan.service
+[Unit]
+Description=monfile folder monitor (single scan cycle)
+Documentation=file:/opt/monfile/docs/OPERATIONS.md
+After=local-fs.target remote-fs.target
+
+[Service]
+Type=oneshot
+User=monfile
+Group=monfile
+ExecStart=/opt/monfile/bin/monfile scan --once
+UMask=0027
+
+StateDirectory=monfile
+StateDirectoryMode=0750
+RuntimeDirectory=monfile
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+# --- Hardening: keep identical to monfile.service ---
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ReadOnlyPaths=/etc/monfile

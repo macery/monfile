@@ -1,0 +1,65 @@
+# Third-Party Component Inventory (CVE Tracking)
+
+This file inventories **every** external component that monfile depends on, ships with, or uses to build.
+Its purpose is CVE monitoring and audit evidence on STIG-managed hosts.
+
+**Policy:**
+- monfile has **zero third-party Python packages** (ADR-0001). Its runtime dependencies are OS-vendor packages that the host's normal patch process maintains.
+- Any change to this list requires updating this file in the same commit (see AGENTS.md).
+
+---
+
+## 1. Runtime dependencies (present on target hosts)
+
+| Component | Version constraint | Package (RHEL 8 / RHEL 9 / Ubuntu 22.04 / Ubuntu 24.04) | Purpose | CPE (base) | License | Used by | CVE / advisory feeds | Last reviewed |
+|---|---|---|---|---|---|---|---|---|
+| CPython | ≥ 3.11 | `python3.11` / `python3.11` or `python3.12` / `python3.11` / `python3` (3.12) | Interpreter + stdlib | `cpe:2.3:a:python:python` | PSF-2.0 | everything | NVD, RHSA, USN, python.org security | 2026-10-12 |
+| SQLite (libsqlite3) | OS-provided | `sqlite-libs` / `sqlite-libs` / `libsqlite3-0` / `libsqlite3-0` | State DB via `sqlite3` module | `cpe:2.3:a:sqlite:sqlite` | Public domain | `state.py` | NVD, RHSA, USN | 2026-10-12 |
+| OpenSSL (libcrypto) | OS-provided | `openssl-libs` / `openssl-libs` / `libssl3` / `libssl3t64` | SHA-256 backend for `hashlib` | `cpe:2.3:a:openssl:openssl` | Apache-2.0 (3.x) | `hashing.py` | NVD, RHSA, USN, openssl.org | 2026-10-12 |
+| glibc | OS-provided | `glibc` / `glibc` / `libc6` / `libc6` | C runtime | `cpe:2.3:a:gnu:glibc` | LGPL-2.1+ | interpreter | NVD, RHSA, USN | 2026-10-12 |
+| systemd | OS-provided | `systemd` (all) | Service and timer management, journald | `cpe:2.3:a:systemd_project:systemd` | LGPL-2.1+ | `packaging/systemd/*` | NVD, RHSA, USN | 2026-10-12 |
+| rsyslog / journald | OS-provided | `rsyslog` / `systemd-journald` | Receives audit events on `/dev/log` | `cpe:2.3:a:rsyslog:rsyslog` | GPL-3.0 / LGPL | `audit.py` | NVD, RHSA, USN | 2026-10-12 |
+
+### Python standard library modules used
+These modules ship with CPython, so they are covered by the CPython row above. They are listed so reviewers can map CPython CVEs to their impact on monfile.
+
+`argparse, dataclasses, enum, fcntl, fnmatch, hashlib, json, logging, logging.handlers, os, pathlib, re, secrets, signal, socket, sqlite3, stat, sys, time, datetime, tomllib, typing, abc, contextlib`
+(tests only: `unittest, tempfile`)
+
+> Keep this list in sync with `grep -rhoE "^(import|from) [a-z_.]+" src/ | sort -u`.
+
+## 2. Install-time tools (used by `install.sh` on target hosts)
+
+| Tool | Package | Purpose | CVE feeds | Last reviewed |
+|---|---|---|---|---|
+| bash | `bash` | runs install/uninstall scripts | NVD, RHSA, USN | 2026-10-12 |
+| coreutils (`install`, `sha256sum`, `chown`, `chmod`) | `coreutils` | file placement and checksum verification | NVD, RHSA, USN | 2026-10-12 |
+| shadow-utils (`useradd`, `groupadd`) | `shadow-utils` / `passwd` | create service account | NVD, RHSA, USN | 2026-10-12 |
+| tar / gzip | `tar`, `gzip` | unpack delivery tarball | NVD, RHSA, USN | 2026-10-12 |
+| fapolicyd-cli (RHEL, optional) | `fapolicyd` | add trust for `/opt/monfile` | NVD, RHSA | 2026-10-12 |
+
+## 3. Build/development-only tools (never shipped to target hosts)
+
+| Tool | Version | Purpose | Notes | Last reviewed |
+|---|---|---|---|---|
+| git | any current | version control | dev workstation | 2026-10-12 |
+| tar / gzip / sha256sum | OS | `build-tarball.sh` | dev/build host | 2026-10-12 |
+| setuptools *(optional)* | ≥ 61 | `pip install -e .` local dev installs via pyproject.toml | not used by build-tarball.sh; never shipped | 2026-10-12 |
+| ruff *(optional)* | pin when adopted | lint/format | not yet adopted; add a pin + review date when used | — |
+| mypy *(optional)* | pin when adopted | type checking | not yet adopted | — |
+
+## 4. Review procedure
+1. **Cadence:** review monthly, before every release, and whenever a critical CVE is announced for any row above.
+2. **Sources:**
+   - NVD: https://nvd.nist.gov/vuln/search (search by CPE)
+   - Red Hat: https://access.redhat.com/security/security-updates/ (RHSA)
+   - Ubuntu: https://ubuntu.com/security/notices (USN)
+   - Python: https://www.python.org/news/security/
+3. **For each row:** check for new CVEs that affect the target versions. Assess reachability from monfile's usage (e.g. a `tarfile` CVE is unreachable, because monfile doesn't import it). Record the result below.
+4. Update the *Last reviewed* dates.
+5. Remediation is normally by the host's OS patching. If a CVE is reachable and unpatched, open an issue and note the mitigation here.
+
+## 5. Review log
+| Date | Reviewer | Scope | Findings | Action |
+|---|---|---|---|---|
+| 2026-10-12 | (initial) | inventory created | n/a — no code yet | — |
