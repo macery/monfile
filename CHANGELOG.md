@@ -4,8 +4,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.0.1] - 2026-10-12
+First tagged release. **Design and scaffold only:** the modules are stubs, and the tool does not process files yet.
+
 ### Added
 - MIT license (`LICENSE`).
+- GitHub Actions release workflow: on a `v*` tag, it runs the tests, builds the tarball and `SHA256SUMS`, and publishes them as a GitHub release.
 - Initial project scaffolding: design docs, requirements, ADRs 0001–0008, audit documentation, the third-party inventory, the example config, stub package, systemd units, and install/build script drafts.
 - Optional per-folder `ready_marker` setting (e.g. `.done`): a file is processed only after its marker exists, and the marker is removed on success (ADR-0009). New audit events: `MARKER_SEEN`, `MARKER_ORPHAN`, `MARKER_REMOVED`, `MARKER_REMOVE_FAIL`.
 - Optional per-folder `skip_empty` setting (default `false`), with the `FILE_SKIPPED` event.

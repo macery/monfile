@@ -44,6 +44,9 @@ These modules ship with CPython, so they are covered by the CPython row above. T
 |---|---|---|---|---|
 | git | any current | version control | dev workstation | 2026-10-12 |
 | tar / gzip / sha256sum | OS | `build-tarball.sh` | dev/build host | 2026-10-12 |
+| GitHub Actions runner | `ubuntu-24.04` image | release builds (`.github/workflows/release.yml`) | GitHub-hosted; image updated by GitHub | 2026-10-12 |
+| actions/checkout | v7.0.1, pinned to commit `3d3c42e5aac5ba805825da76410c181273ba90b1` | checkout in the release workflow | update the pin deliberately; check GitHub advisories | 2026-10-12 |
+| gh CLI | runner-provided | creates the GitHub release | GitHub-hosted runner tool | 2026-10-12 |
 | setuptools *(optional)* | ≥ 61 | `pip install -e .` local dev installs via pyproject.toml | not used by build-tarball.sh; never shipped | 2026-10-12 |
 | ruff *(optional)* | pin when adopted | lint/format | not yet adopted; add a pin + review date when used | — |
 | mypy *(optional)* | pin when adopted | type checking | not yet adopted | — |
