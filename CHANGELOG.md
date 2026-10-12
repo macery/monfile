@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-12
+Still **design and documentation only:** the modules are stubs, and the tool does not process files yet. This release replaces 0.0.1 as the first planned version.
+
+### Added
+- `HOWTO.md`: a step-by-step guide to setting up and using monfile, with a worked example and common recipes. It ships in the tarball, is installed to `/opt/monfile/docs/`, and is attached to each GitHub release.
+
 ## [0.0.1] - 2026-10-12
 First tagged release. **Design and scaffold only:** the modules are stubs, and the tool does not process files yet.
 

@@ -14,6 +14,7 @@ Keep it in sync with `packaging/` (AGENTS.md).
 | `/opt/monfile/bin/monfile` | file | root:root | 0755 | Launcher: Python script with `#!<python> -I` shebang that prepends `/opt/monfile/lib` to `sys.path` (isolated mode ignores env vars and user site-packages) | install.sh | yes |
 | `/opt/monfile/lib/monfile/**/*.py` | files | root:root | 0644 | Application code | install.sh | yes |
 | `/opt/monfile/lib/monfile/**/__pycache__/` | dir/files | root:root | 0755/0644 | Precompiled bytecode (`compileall`) | install.sh | yes |
+| `/opt/monfile/docs/**` | dirs / files | root:root | 0755 / 0644 | Documentation, including `HOWTO.md` and `OPERATIONS.md` (referenced by the units' `Documentation=`) | install.sh | yes |
 | `/opt/monfile/VERSION` | file | root:root | 0644 | Installed version + tarball SHA-256 | install.sh | yes |
 | `/etc/monfile/` | dir | root:monfile | 0750 | Config dir | install.sh | **no** (preserved) |
 | `/etc/monfile/monfile.toml` | file | root:monfile | 0640 | Active config (example copied only if absent) | install.sh / admin | **no** |

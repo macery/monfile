@@ -36,6 +36,7 @@ These modules ship with CPython, so they are covered by the CPython row above. T
 | coreutils (`install`, `sha256sum`, `chown`, `chmod`) | `coreutils` | file placement and checksum verification | NVD, RHSA, USN | 2026-10-12 |
 | shadow-utils (`useradd`, `groupadd`) | `shadow-utils` / `passwd` | create service account | NVD, RHSA, USN | 2026-10-12 |
 | tar / gzip | `tar`, `gzip` | unpack delivery tarball | NVD, RHSA, USN | 2026-10-12 |
+| setfacl (admin setup, documented in HOWTO §4) | `acl` | grant the `monfile` group access to watch/destination folders; not run by monfile or install.sh | NVD, RHSA, USN | 2026-10-12 |
 | fapolicyd-cli (RHEL, optional) | `fapolicyd` | add trust for `/opt/monfile` | NVD, RHSA | 2026-10-12 |
 
 ## 3. Build/development-only tools (never shipped to target hosts)

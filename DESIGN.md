@@ -266,7 +266,7 @@ meta(key PRIMARY KEY, value)   -- schema_version, created_at
 ```json
 {
   "schema_version": 1,
-  "monfile_version": "0.0.1",
+  "monfile_version": "0.1.0",
   "host": "hostname",
   "folder_id": "inbound-a",
   "source": {"path": "/data/inbound/a/report.pdf", "size": 12345, "mtime": "…Z",

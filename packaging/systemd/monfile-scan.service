@@ -2,7 +2,7 @@
 # Site-specific writable paths go in a drop-in:  systemctl edit monfile-scan.service
 [Unit]
 Description=monfile folder monitor (single scan cycle)
-Documentation=file:/opt/monfile/docs/OPERATIONS.md
+Documentation=file:/opt/monfile/docs/HOWTO.md file:/opt/monfile/docs/OPERATIONS.md
 After=local-fs.target remote-fs.target
 
 [Service]

@@ -18,7 +18,8 @@ UNIT_DIR=/etc/systemd/system
 #  3. Account: `groupadd -r monfile`; `useradd -r -g monfile -s /sbin/nologin -M -d / monfile`
 #     (skip if they exist).
 #  4. Code: `install -d -o root -g root -m 0755 $PREFIX/{bin,lib}`; copy src/monfile →
-#     $PREFIX/lib/monfile (files 0644, dirs 0755); copy docs/ → $PREFIX/docs; write $PREFIX/VERSION.
+#     $PREFIX/lib/monfile (files 0644, dirs 0755); copy docs/ and HOWTO.md → $PREFIX/docs
+#     (dirs 0755, files 0644); write $PREFIX/VERSION.
 #  5. Bytecode: `"$PY" -I -m compileall -q $PREFIX/lib` (the service can't write to /opt).
 #  6. Launcher: write $PREFIX/bin/monfile (0755) with shebang `#!$PY -I`, which inserts
 #     $PREFIX/lib into sys.path and calls monfile.cli.main().

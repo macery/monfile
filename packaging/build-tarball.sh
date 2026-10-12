@@ -14,7 +14,7 @@ tar -C "$root" \
     --owner=0 --group=0 --numeric-owner --sort=name \
     --transform "s,^,${name}/," \
     -czf "$dist/${name}.tar.gz" \
-    src config packaging docs LICENSE README.md DESIGN.md THIRD_PARTY.md SECURITY.md CHANGELOG.md
+    src config packaging docs LICENSE README.md HOWTO.md DESIGN.md THIRD_PARTY.md SECURITY.md CHANGELOG.md
 
 (cd "$dist" && sha256sum "${name}.tar.gz" > SHA256SUMS)
 echo "built $dist/${name}.tar.gz"

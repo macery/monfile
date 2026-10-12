@@ -26,6 +26,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 |---|---|
 | [DESIGN.md](DESIGN.md) | Architecture, algorithms, config schema, open questions |
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | Numbered, traceable requirements |
+| [HOWTO.md](HOWTO.md) | Step-by-step setup and everyday use |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Install, configure, operate, troubleshoot |
 | [THIRD_PARTY.md](THIRD_PARTY.md) | Dependency / CVE tracking inventory |
 | [SECURITY.md](SECURITY.md) | Security posture and vulnerability handling |

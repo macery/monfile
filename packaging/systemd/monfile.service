@@ -5,7 +5,7 @@
 #   ReadWritePaths=/data/inbound/a /data/outbound/a /data/processed/a
 [Unit]
 Description=monfile folder monitor (daemon)
-Documentation=file:/opt/monfile/docs/OPERATIONS.md
+Documentation=file:/opt/monfile/docs/HOWTO.md file:/opt/monfile/docs/OPERATIONS.md
 After=local-fs.target remote-fs.target network-online.target
 Wants=network-online.target
 
