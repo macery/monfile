@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-15
+Adds folder batches: a folder can settle as a whole and then run one approved, root-owned program, with full audit logging (ADR-0011). Also adds `install.sh --run-as` for hosts that must use an existing account. Folder batches and `--run-as` are covered by unit tests and an end-to-end run of the daemon loop, but not yet by a manual test on a real host. The core was manually tested on Ubuntu 24.04; nothing has been tested on RHEL 8/9 or Ubuntu 22.04 yet. **Upgrading converts the state database to schema version 2, which older versions can't read:** back up `/var/lib/monfile/state.db` first if you might downgrade.
+
 ### Added
 - **Folder batches** (`trigger = "folder"`, FR-22, ADR-0011). A folder can be settled as a whole: once nothing in it has been added, changed or removed for `settle_seconds`, one action runs for the whole batch. While it runs, other folders keep being scanned. Folder batches need the daemon.
 - **`command` action** (FR-23, SR-13, AR-09), for folder batches only. Runs one program named in the config, without a shell, with fixed `args`, a fixed environment, and a timeout (`timeout_seconds`, default 2 h; SIGTERM to its process group, then SIGKILL). Before every run monfile checks that the program and every directory above it are root-owned and not group/world-writable, with no symlinks, and logs its SHA-256. Each output line is logged (`COMMAND_OUTPUT`). `busy_exit_code` marks "already running, retry in 5 minutes". `expect_empty` (default on) makes success require an empty folder. A failed batch is held until the folder changes or `monfile retry <folder>`. Each run gets a manifest listing the batch's files with SHA-256 (`hash_batch`, default on). The program receives `MONFILE_FOLDER_ID`, `MONFILE_FOLDER_PATH`, `MONFILE_BATCH_ID`, and `MONFILE_BATCH_LIST` (a NUL-separated list of the batch's files).

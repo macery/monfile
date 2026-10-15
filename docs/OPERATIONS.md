@@ -1,6 +1,6 @@
 # Operations Guide
 
-> 0.3.0: implemented, unit-tested, and manually tested on Ubuntu 24.04. It has not yet been tested on RHEL 8/9 or Ubuntu 22.04.
+> 0.4.0: implemented, unit-tested, and manually tested on Ubuntu 24.04. Folder batches and `--run-as` are so far only unit-tested. It has not yet been tested on RHEL 8/9 or Ubuntu 22.04.
 
 ## 1. Prerequisites
 | OS | Install Python |
