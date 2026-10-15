@@ -39,7 +39,14 @@ class TestTarballManifest(unittest.TestCase):
         )
         (tarball,) = (tmp / "dist").glob("monfile-*.tar.gz")
         with tarfile.open(tarball) as tf:
-            tf.extractall(tmp / "x", filter="data")
+            if hasattr(tarfile, "data_filter"):
+                tf.extractall(tmp / "x", filter="data")
+            else:  # Python < 3.11.4 (e.g. Ubuntu 22.04's python3.11): check members ourselves
+                for m in tf.getmembers():
+                    parts = Path(m.name).parts
+                    if not (m.isfile() or m.isdir()) or m.name.startswith("/") or ".." in parts:
+                        raise AssertionError(f"unsafe tarball member: {m.name}")
+                tf.extractall(tmp / "x")  # noqa: S202 - members validated above
         (cls.tree,) = (tmp / "x").iterdir()
 
     @classmethod
