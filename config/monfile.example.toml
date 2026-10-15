@@ -17,6 +17,11 @@ max_files_per_cycle   = 1000                          # backpressure: max files 
 # rejected as an unknown key. Name a folder with its `id` instead (it appears in logs,
 # manifest paths, and `monfile status`/`retry`), and use a comment like the ones below
 # as a visual label.
+#
+# `enabled = false` turns a folder off without deleting its block: it is still
+# syntax-checked, but its directories are not checked or scanned. Both examples
+# ship disabled so a copied example watches nothing until you edit it. After
+# changing `enabled`, restart the service (there is no live reload).
 
 # ---------------------------------------------------------------------------
 # Folder 1: copy to an outbound share, keep a processed archive, manifests ON
@@ -24,6 +29,7 @@ max_files_per_cycle   = 1000                          # backpressure: max files 
 # ---------------------------------------------------------------------------
 [[folder]]
 id             = "inbound-a"              # ^[a-z0-9][a-z0-9_-]{0,63}$, unique; used in logs + manifest path
+enabled        = false                    # true (default if omitted) = watch this folder
 path           = "/data/inbound/a"        # absolute; no symlinks in any component
 recursive      = false                    # true = also watch subdirectories
 settle_seconds = 300                      # unchanged for this long before processing (>= 2 x scan interval)
@@ -49,6 +55,7 @@ processed_dir  = "/data/processed/a"      # required when on_success = "move"; m
 # ---------------------------------------------------------------------------
 [[folder]]
 id             = "bulk-drop"
+enabled        = false
 path           = "/data/inbound/bulk"
 recursive      = true
 settle_seconds = 600

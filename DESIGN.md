@@ -152,6 +152,7 @@ max_files_per_cycle   = 1000                          # backpressure
 
 [[folder]]
 id              = "inbound-a"           # ^[a-z0-9][a-z0-9_-]{0,63}$, unique, used in logs and manifest path
+enabled         = true                  # default; false = keep the block but don't watch the folder
 path            = "/data/inbound/a"     # absolute, must exist, must not be a symlink
 recursive       = false
 settle_seconds  = 300
@@ -179,6 +180,8 @@ processed_dir   = "/data/processed/a"   # required when on_success = "move"; mus
 - Unknown keys are an **error**, not a warning. This catches typos in audited configs.
 - `settle_seconds ≥ 2 × scan_interval_seconds`. Otherwise the window can be satisfied in a single observation.
 - `ready_marker`, if set, matches `^\.[A-Za-z0-9_-]{1,32}$` (a dot followed by a short name, such as `.done` or `.ready`). Markers are recognized **before** include/exclude filtering, so no filter can hide them.
+- `[global]`, `[[folder]]` and `[[folder.action]]` are the only section names. A folder is named by its `id`.
+- `enabled = false` (default `true`) turns a folder off. A disabled folder's block is still fully schema-checked, and its `id` still counts for uniqueness, but its paths are not checked for existence, symlinks, overlap, or access, and it is never scanned. Its state records are kept, so re-enabling it resumes where it stopped. At startup monfile logs `FOLDER_DISABLED` for each one. At least one `[[folder]]` block is required, but all of them may be disabled; the service then runs and watches nothing. The shipped example has every folder disabled. Like any config change, toggling `enabled` takes effect on restart (§13 Q10).
 - Every folder has at least one action. `processed_dir` is allowed only with `on_success = "move"`.
 - No output directory (action destination or `processed_dir`) may be inside, or contain, **any** folder's watch path.
 - `validate-config` also checks that the invoking user can read every watch folder and write every output directory (and the watch folder when files are removed from it). Run it as `monfile`. `--schema-only` skips ownership, path, and access checks, for reviewing a config off-host.

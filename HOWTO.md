@@ -84,7 +84,7 @@ The setgid bit (`2…`) on the destination matters. monfile always delivers file
 > **RHEL (SELinux):** monfile runs as `unconfined_service_t`, so default labels such as `default_t` or `var_t` normally work. If access fails, check `sudo ausearch -m avc -ts recent`.
 
 ### 4.2 Write the config
-Edit `/etc/monfile/monfile.toml`. Keep the `[global]` section from the starter file, and replace the example folders with:
+Edit `/etc/monfile/monfile.toml`. Keep the `[global]` section from the starter file, and replace the example folders with the block below. The starter file's example folders are set to `enabled = false`, so until you do this the service runs but watches nothing. `[[folder]]` is a fixed section name; the folder's own name goes in `id`.
 
 ```toml
 [[folder]]
@@ -221,6 +221,12 @@ These patterns are ignored by default: `.*`, `*.part`, `*.tmp`, `~$*`, `*.crdown
 exclude = [".*", "*.part", "*.tmp", "~$*", "*.crdownload", "*.filepart", "*.uploading"]
 ```
 Setting `exclude` replaces the default list, so keep the defaults in it.
+
+### Pause a folder without deleting it
+```toml
+enabled = false                 # default true; the block is still syntax-checked, but nothing is scanned
+```
+Restart the service to apply it. Startup logs `FOLDER_DISABLED` for the folder. Files already tracked keep their state. To resume, set it back to `true` (or remove the line) and restart.
 
 ### Add a second folder
 Add another `[[folder]]` block with a unique `id`, then:

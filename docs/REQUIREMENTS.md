@@ -32,6 +32,7 @@ The *Verify* column names how each requirement is (or will be) demonstrated: **T
 | FR-18 | A DONE file whose stat changes later is processed again as a new version. | §4.3 | T |
 | FR-19 | Zero-byte files are processed by default. A per-folder `skip_empty` option skips them. | §4.3 | T |
 | FR-20 | Files have no size limit. Files over 10 GiB emit a `FILE_LARGE` warning. | §4.3 | T |
+| FR-21 | A folder can be turned off with `enabled = false` without removing it from the config. A disabled folder is not scanned and its paths are not checked, and its being disabled is logged at startup. | §5 | T |
 
 ## Security
 | ID | Requirement | Design | Verify |

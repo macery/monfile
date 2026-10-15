@@ -116,6 +116,10 @@ def cmd_validate(path: Path, *, schema_only: bool) -> int:
         chain = " -> ".join(f"{a.type}:{a.params['destination']}" for a in f.actions)
         extra = f", marker {f.ready_marker}" if f.ready_marker else ""
         print(f"  {f.id}: {f.path} settle={f.settle_seconds}s{extra}; {chain}; on_success={f.on_success}")
+    for f in cfg.disabled:
+        print(f"  {f.id}: DISABLED (enabled = false; paths not checked)")
+    if not cfg.folders:
+        print("monfile: note: no folder is enabled, so the service will run but watch nothing")
     return EXIT_OK
 
 
@@ -155,7 +159,10 @@ def cmd_run(cfg: Config, *, mode: str, dry_run: bool) -> int:
 
     audit.emit(EventID.SERVICE_START, version=__version__, mode=mode, pid=os.getpid(),
                user=pwd.getpwuid(os.geteuid()).pw_name, python=sys.executable, fips=_fips(), dryrun=dry_run)
-    audit.emit(EventID.CONFIG_LOADED, config=cfg.source_path, sha256=cfg.sha256, folders=len(cfg.folders))
+    audit.emit(EventID.CONFIG_LOADED, config=cfg.source_path, sha256=cfg.sha256, folders=len(cfg.folders),
+               disabled=len(cfg.disabled))
+    for f in cfg.disabled:
+        audit.emit(EventID.FOLDER_DISABLED, folder=f.id, path=f.path)
     try:
         g.state_dir.mkdir(mode=0o750, exist_ok=True)
         store = StateStore(g.state_dir / "state.db")
@@ -220,6 +227,10 @@ def cmd_status(cfg: Config, *, show_all: bool) -> int:
 
 
 def cmd_retry(cfg: Config, folder_id: str, rel_path: str) -> int:
+    if folder_id in {f.id for f in cfg.disabled}:
+        print(f"monfile: folder {folder_id!r} is disabled (enabled = false); enable it to retry its files",
+              file=sys.stderr)
+        return EXIT_ERROR
     if folder_id not in {f.id for f in cfg.folders}:
         print(f"monfile: unknown folder id {folder_id!r}", file=sys.stderr)
         return EXIT_ERROR

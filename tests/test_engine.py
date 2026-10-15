@@ -82,6 +82,13 @@ class TestCycle(TreeCase):
         self.assertEqual(m["disposition"]["mode"], "move")
         self.assertEqual(list((self.root / "out").iterdir()), [out])  # no temp files left
 
+    def test_disabled_folder_is_not_scanned(self) -> None:
+        r = self.runner({"enabled": False})
+        self.write("report.pdf", b"data")
+        self.settle(r)
+        self.assertEqual(self.cap.events(), [])
+        self.assertEqual(list((self.root / "out").iterdir()), [])
+
     def test_change_during_settle_resets(self) -> None:
         r = self.runner()
         p = self.write("a.txt", b"one")

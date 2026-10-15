@@ -54,7 +54,7 @@ class TreeCase(unittest.TestCase):
         g = {"state_dir": str(self.root / "state"), "manifest_dir": str(self.root / "state" / "manifests"),
              "scan_interval_seconds": 1, **global_}
         gc, folders = parse_config({"global": g, "folder": [f]})
-        return Config(gc, folders, self.root / "monfile.toml", "0" * 64)
+        return Config.build(gc, folders, self.root / "monfile.toml", "0" * 64)
 
     def store(self) -> StateStore:
         s = StateStore(self.root / "state" / "state.db")

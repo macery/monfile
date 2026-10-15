@@ -17,10 +17,11 @@ monfile[1234]: event=ACTION_OK folder=inbound-a path="/data/inbound/a/report.pdf
 |---|---|---|---|
 | `SERVICE_START` | info | Process started (any mode) | `version`, `mode` (run/scan), `pid`, `user`, `python`, `fips` (true/false), `dryrun` (true/false) |
 | `SERVICE_STOP` | info | Clean shutdown | `reason` (signal/once-complete) |
-| `CONFIG_LOADED` | info | Config parsed and validated | `config`, `sha256`, `folders` |
+| `CONFIG_LOADED` | info | Config parsed and validated | `config`, `sha256`, `folders` (enabled), `disabled` |
 | `CONFIG_INVALID` | error | Validation failure (process exits) | `config`, `error` |
 | `CONFIG_PERMS_INSECURE` | error | Config ownership/mode check failed (process exits) | `config`, `owner`, `mode` |
 | `LOCK_BUSY` | info | Another instance holds the lock (scan mode exits 0, run mode exits 1) | `lock` |
+| `FOLDER_DISABLED` | notice | At startup, once per folder with `enabled = false`; the folder is not watched | — |
 | `FOLDER_UNAVAILABLE` | warning | Watch path missing/unreadable this cycle | `folder`, `error` |
 | `FILE_DETECTED` | info | New file path first observed | `size`, `mtime` |
 | `FILE_CHANGED_DURING_SETTLE` | info | Stat or hash changed; settle window reset | `reason` (stat/hash/clock) |

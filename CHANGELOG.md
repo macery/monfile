@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- Per-folder `enabled = true|false` (default `true`, FR-21). A disabled folder stays in the config and is still schema-checked, but it isn't scanned and its directories needn't exist. The service logs the new `FOLDER_DISABLED` event (notice) for each one at startup, `CONFIG_LOADED` gains a `disabled` count, `validate-config` lists disabled folders, and `retry` refuses them with an explanation.
+
+### Changed
+- Both folders in `config/monfile.example.toml` now ship with `enabled = false`, so a config copied from the example loads cleanly and watches nothing until edited. A fresh install's `/etc/monfile/monfile.toml` is that example, so the service now starts idle instead of failing on the example's missing `/data` paths.
+
 ### Documentation
 - The example config explains that `[global]`, `[[folder]]` and `[[folder.action]]` are fixed section names, and that a folder is named by its `id`.
 

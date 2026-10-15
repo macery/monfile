@@ -405,6 +405,7 @@ next_steps() {
 
 Next steps:
   1. Edit $CONF_FILE (reference: $PREFIX/docs/monfile.example.toml).
+     The example folders ship with enabled = false: add yours, or set enabled = true.
   2. Allow the sandbox to write to your folders:  systemctl edit monfile.service
      (or monfile-scan.service), then add  [Service] ReadWritePaths=<dirs>
   3. Validate:  sudo -u $SVC_USER $PREFIX/bin/monfile validate-config

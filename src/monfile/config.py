@@ -43,6 +43,7 @@ class ActionConfig:
 class FolderConfig:
     id: str
     path: Path
+    enabled: bool = True  # false = fully parsed but never scanned; path checks skipped
     recursive: bool = False
     settle_seconds: int = 300
     verify_hash: bool = True
@@ -82,9 +83,15 @@ class GlobalConfig:
 @dataclass(frozen=True)
 class Config:
     global_: GlobalConfig
-    folders: tuple[FolderConfig, ...]
+    folders: tuple[FolderConfig, ...]  # enabled folders only: the ones monfile scans
     source_path: Path
     sha256: str  # hash of the raw config bytes, logged in CONFIG_LOADED
+    disabled: tuple[FolderConfig, ...] = ()  # enabled = false; logged at startup, never scanned
+
+    @classmethod
+    def build(cls, g: GlobalConfig, folders: tuple[FolderConfig, ...], source_path: Path, sha256: str) -> Config:
+        return cls(g, tuple(f for f in folders if f.enabled), source_path, sha256,
+                   tuple(f for f in folders if not f.enabled))
 
 
 def check_permissions(path: Path) -> None:
@@ -124,11 +131,12 @@ def load_config(path: Path, *, check_perms: bool = True, check_paths: bool = Tru
         data = tomllib.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from None
-    cfg = parse_config(data, check_paths=check_paths)
-    return Config(cfg[0], cfg[1], path, hashlib.sha256(raw).hexdigest())
+    g, folders = parse_config(data, check_paths=check_paths)
+    return Config.build(g, folders, path, hashlib.sha256(raw).hexdigest())
 
 
 def parse_config(data: dict[str, Any], *, check_paths: bool = True) -> tuple[GlobalConfig, tuple[FolderConfig, ...]]:
+    """Return the global settings and every folder, enabled or not (Config.build splits them)."""
     errors: list[str] = []
     _unknown(data, {"global", "folder"}, "top level", errors)
     g = _parse_global(_table(data.get("global", {}), "[global]", errors), errors)
@@ -242,9 +250,11 @@ def _parse_folder(raw: Any, index: int, g: GlobalConfig, errors: list[str], chec
     else:
         where = f"[[folder]] {fid}"
     _unknown(t, _FOLDER_KEYS, where, errors)
+    d = FolderConfig(id=fid, path=Path("/"))
+    enabled = _get(t, "enabled", bool, d.enabled, where, errors)
+    check = check and enabled  # a disabled folder's directories need not exist yet
 
     path = _abs_path(t.get("path"), "path", where, errors, check=check)
-    d = FolderConfig(id=fid, path=Path("/"))
     settle = _get(t, "settle_seconds", int, d.settle_seconds, where, errors)
     if settle < 2 * g.scan_interval_seconds:
         errors.append(f"{where}: settle_seconds ({settle}) must be >= 2 x scan_interval_seconds ({g.scan_interval_seconds})")
@@ -297,6 +307,7 @@ def _parse_folder(raw: Any, index: int, g: GlobalConfig, errors: list[str], chec
     return FolderConfig(
         id=fid,
         path=path,
+        enabled=enabled,
         recursive=_get(t, "recursive", bool, d.recursive, where, errors),
         settle_seconds=settle,
         verify_hash=_get(t, "verify_hash", bool, d.verify_hash, where, errors),
@@ -321,6 +332,7 @@ def _cross_checks(folders: list[FolderConfig], errors: list[str]) -> None:
         if f.id in seen:
             errors.append(f"[[folder]] {f.id}: duplicate id")
         seen.add(f.id)
+    folders = [f for f in folders if f.enabled]  # disabled folders may overlap until enabled
     for i, a in enumerate(folders):
         for b in folders[i + 1:]:
             if _inside(a.path, b.path) or _inside(b.path, a.path):

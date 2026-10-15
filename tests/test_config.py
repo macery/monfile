@@ -9,7 +9,7 @@ from typing import Any
 
 from helpers import TreeCase
 
-from monfile.config import ConfigError, ConfigPermsError, load_config, parse_config
+from monfile.config import Config, ConfigError, ConfigPermsError, GlobalConfig, load_config, parse_config
 
 
 class TestConfigRules(TreeCase):
@@ -35,6 +35,23 @@ class TestConfigRules(TreeCase):
     def test_unknown_action_param(self) -> None:
         data = self.base(action=[{"type": "copy", "destination": str(self.root / "out"), "overwrite": True}])
         self.assertInvalid(data, "unknown key 'overwrite'")
+
+    def test_disabled_folder_skips_path_checks(self) -> None:
+        data = self.base(enabled=False, path=str(self.root / "missing"))
+        data["folder"][0]["action"][0]["destination"] = str(self.root / "missing-out")
+        _, folders = parse_config(data)
+        cfg = Config.build(GlobalConfig(), folders, Path("x.toml"), "0" * 64)
+        self.assertEqual((cfg.folders, [f.id for f in cfg.disabled]), ((), ["a"]))
+        self.assertInvalid(self.base(enabled=False, setle_seconds=60), "unknown key 'setle_seconds'")
+        self.assertInvalid(self.base(enabled="no"), "enabled must be bool")
+
+    def test_disabled_folder_may_overlap_but_not_reuse_id(self) -> None:
+        data = self.base()
+        other = dict(data["folder"][0], id="b", enabled=False)  # same watch path as "a"
+        data["folder"].append(other)
+        parse_config(data)
+        data["folder"][1]["id"] = "a"
+        self.assertInvalid(data, "duplicate id")
 
     def test_duplicate_id(self) -> None:
         data = self.base()
@@ -88,7 +105,13 @@ class TestConfigFile(TreeCase):
     def test_example_config_schema(self) -> None:
         example = Path(__file__).resolve().parent.parent / "config" / "monfile.example.toml"
         cfg = load_config(example, check_perms=False, check_paths=False)
-        self.assertEqual([f.id for f in cfg.folders], ["inbound-a", "bulk-drop"])
+        self.assertEqual([f.id for f in cfg.disabled], ["inbound-a", "bulk-drop"])
+
+    def test_example_config_folders_ship_disabled(self) -> None:
+        """A copied example must load (its /data paths don't exist) and watch nothing until edited."""
+        example = Path(__file__).resolve().parent.parent / "config" / "monfile.example.toml"
+        cfg = load_config(example, check_perms=False)
+        self.assertEqual(cfg.folders, ())
 
 
 if __name__ == "__main__":
