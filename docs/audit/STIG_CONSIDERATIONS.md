@@ -14,9 +14,9 @@ It is **guidance for the host owner and assessor**, not a certification. Validat
 | CM-2 / CM-6 | Baseline / config settings | Config is root-owned 0640, strictly validated, and its hash is logged at load | DESIGN §5, `CONFIG_LOADED` |
 | CM-7 | Least functionality | No network listeners, no shell or exec, built-in actions only | ADR-0006, `RestrictAddressFamilies=AF_UNIX` |
 | CM-8 / SA-22 / RA-5 | Component inventory / vuln scanning | Third-party inventory with CPEs and a review log | `THIRD_PARTY.md` |
-| CM-11 | User-installed software | Installed under `/opt/monfile`, with an inventory and checksums | FILE_INVENTORY, `SHA256SUMS` |
+| CM-11 | User-installed software | Installed under `/opt/monfile`, with an inventory and checksums. Install/upgrade/uninstall steps are logged to syslog (`monfile-install`). | FILE_INVENTORY, `SHA256SUMS`, `MANIFEST.sha256`, ADR-0010 |
 | SC-13 | Cryptographic protection | SHA-256 only (FIPS 180-4). Works with FIPS mode enabled. | ADR-0007 |
-| SI-7 | Software/information integrity | Transfer integrity via SHA-256 verify. Code integrity via root-owned install + AIDE + fapolicyd trust | ADR-0007, below |
+| SI-7 | Software/information integrity | Transfer integrity via SHA-256 verify. Code integrity via per-file manifest verification at install, root-owned install, AIDE, and fapolicyd trust | ADR-0007, ADR-0010, below |
 | SI-11 | Error handling | Errors are logged without file contents, and failures don't destroy the source | ADR-0005, SR-11 |
 
 ## Host-owner checklist (per target host)
@@ -24,6 +24,7 @@ It is **guidance for the host owner and assessor**, not a certification. Validat
 ### All hosts
 - [ ] Python ≥ 3.11 is installed from vendor repos (`python3.11`, or `python3` on Ubuntu 24.04)
 - [ ] The `monfile` account was created by install.sh and has no login shell
+- [ ] The install is on record: `journalctl -t monfile-install`, and `/opt/monfile/VERSION` records the tarball SHA-256 (`--tarball-sha`)
 - [ ] Watch, destination, and processed dirs exist, with the `monfile` group granted access (rwx on watch dirs if disposition is move/delete)
 - [ ] The `paths.conf` systemd drop-in lists those dirs in `ReadWritePaths=`
 - [ ] `/etc/monfile/monfile.toml` is `root:monfile 0640`, and `monfile validate-config` passes
@@ -35,7 +36,7 @@ It is **guidance for the host owner and assessor**, not a certification. Validat
 
 ### RHEL 8/9
 - [ ] SELinux is enforcing. Watch, dest, and processed dirs have contexts that `unconfined_service_t` can access. Typically the default `var_t` or `default_t` labels are fine, but verify with `ausearch -m avc -c python3.11`.
-- [ ] If **fapolicyd** is enabled, trust the install: `fapolicyd-cli --file add /opt/monfile/ && fapolicyd-cli --update`. Python source and bytecode loaded by the interpreter are checked against the trust DB.
+- [ ] If **fapolicyd** is enabled, `/opt/monfile/` is trusted (`fapolicyd-cli --file list | grep /opt/monfile`). `install.sh` adds the trust automatically when fapolicyd is running. If fapolicyd was enabled later, re-run `install.sh`. Python source and bytecode loaded by the interpreter are checked against the trust DB.
 - [ ] `python3.11` was installed from AppStream (RHEL 8) or AppStream/BaseOS (RHEL 9)
 
 ### Ubuntu 22.04/24.04

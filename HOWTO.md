@@ -3,7 +3,7 @@
 This guide takes you from a downloaded release to a working watch folder, then covers everyday use.
 For reference material, see [docs/OPERATIONS.md](docs/OPERATIONS.md) (troubleshooting, upgrades), [config/monfile.example.toml](config/monfile.example.toml) (every config option) and [DESIGN.md](DESIGN.md) (how it works).
 
-> **Status (0.1.0):** this release contains the design and the documentation. The program itself is not implemented yet: `install.sh` exits with an error, and the `monfile` commands print "not implemented yet." This guide describes how monfile **will** be set up and used, so you can plan deployments and review the workflow now.
+> **Status (0.2, in development):** the program is implemented and unit-tested, but not yet field-tested on every target platform. Please report anything in this guide that doesn't match what you see.
 
 ---
 
@@ -41,14 +41,20 @@ sha256sum -c SHA256SUMS                 # must print: monfile-<version>.tar.gz: 
 # 2. Unpack and install
 tar -xzf monfile-<version>.tar.gz
 cd monfile-<version>
-sudo ./packaging/install.sh             # RHEL with fapolicyd: add --fapolicyd
+sudo ./packaging/install.sh --dry-run   # optional: see every change first
+sudo ./packaging/install.sh
 ```
 
 The installer:
+- checks every file against the release's `MANIFEST.sha256`, and stops if anything was changed
 - creates the `monfile` system account
 - installs the program under `/opt/monfile`
 - puts a starter config at `/etc/monfile/monfile.toml`, only if one doesn't already exist
 - installs the systemd units without enabling them
+- adds fapolicyd trust automatically on RHEL hosts where fapolicyd is running
+- logs each step to syslog (`journalctl -t monfile-install`)
+
+Running a newer release's `install.sh` upgrades in place. It restarts whatever was running and keeps your config and state.
 
 Every installed path is listed in [docs/audit/FILE_INVENTORY.md](docs/audit/FILE_INVENTORY.md).
 
@@ -117,7 +123,9 @@ If you use timer mode (section 5), make the same change with `systemctl edit mon
 ```sh
 sudo -u monfile /opt/monfile/bin/monfile validate-config
 ```
-Fix anything it reports. It also refuses a config that isn't `root:monfile 0640`.
+Fix anything it reports. It also refuses a config that isn't `root:monfile 0640`. Because it runs as `monfile`, it also reports any folder that the service account can't read or write.
+
+> `validate-config` runs outside the systemd sandbox, so it can't detect a missing `ReadWritePaths=` entry. If files fail with `PERMISSION_DENIED` or "Read-only file system" while `validate-config` passes, check the drop-in from §4.3.
 
 ## 5. Start it
 
@@ -235,6 +243,7 @@ Things to know:
 - **A failed file is left alone.** The original stays in place and isn't retried automatically. It is retried when the file changes or when you run `retry`. Steps that already succeeded are not repeated.
 - **Nothing is ever overwritten.** On a name collision, `suffix` adds a timestamp, `skip` accepts an identical existing file, and `fail` stops.
 - **Records are kept forever.** monfile never deletes its state database or manifests. Watch disk use in `/var/lib/monfile`, and archive it according to your site's retention policy.
+- **Processed originals are kept too.** With `on_success = "move"`, every original stays in `processed_dir` alongside the delivered copy, and monfile never removes it. If you don't need a second copy, use a `move` action or `on_success = "delete"` instead (the manifest and log still record the SHA-256). Automatic expiry is a roadmap item (DESIGN §14, R1).
 
 ## 9. Alerting
 

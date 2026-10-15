@@ -1,0 +1,42 @@
+# Run the test suite on every push and pull request. Tools used here are listed in
+# THIRD_PARTY.md §3. Python comes from the OS repositories, as on target hosts (OR-01):
+# ubuntu-24.04 → python3 3.12; ubuntu-22.04 → python3.11 from universe (the minimum supported).
+name: test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: python3
+          - os: ubuntu-22.04
+            python: python3.11
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install python3.11 (22.04 only)
+        if: matrix.python == 'python3.11'
+        run: sudo apt-get update -q && sudo apt-get install -y -q python3.11
+
+      - name: Python version
+        run: ${{ matrix.python }} --version
+
+      - name: Unit tests
+        run: PYTHONPATH=src ${{ matrix.python }} -m unittest discover -s tests -v
+
+      - name: Example config passes schema validation
+        run: PYTHONPATH=src ${{ matrix.python }} -m monfile validate-config --schema-only -c config/monfile.example.toml
+
+      - name: Tarball builds
+        run: ./packaging/build-tarball.sh

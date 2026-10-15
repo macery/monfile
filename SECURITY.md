@@ -42,4 +42,5 @@ Each release tarball is accompanied by a `SHA256SUMS` file. Verify it before ins
 ```sh
 sha256sum -c SHA256SUMS
 ```
+The tarball also contains `MANIFEST.sha256`, with a SHA-256 for every file in it. `install.sh` verifies the extracted files against it in a private staging dir and refuses symlinks or unlisted files (ADR-0010). This detects corruption or edits made after extraction. Authenticity still rests on `SHA256SUMS`.
 *(Optional, open item: GPG-sign the SHA256SUMS file.)*

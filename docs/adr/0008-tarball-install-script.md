@@ -2,13 +2,14 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-12
+- **Amended by:** ADR-0010 (manifest verification, upgrade, fapolicyd)
 
 ## Context
 Native RPM/DEB packaging is heavier to build and sign. The tool is small and pure Python.
 
 ## Decision
 Ship `monfile-<version>.tar.gz` with a `SHA256SUMS` file. `install.sh` does the following:
-1. Verify checksums.
+1. Verify checksums (per-file `MANIFEST.sha256`, see ADR-0010).
 2. Create the `monfile` system user and group.
 3. Install into `/opt/monfile` (root-owned) and precompile bytecode.
 4. Install the systemd units, tmpfiles, and an example config.

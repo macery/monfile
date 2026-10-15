@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import os
 import re
 import sys
 import tomllib
@@ -59,6 +60,28 @@ class TestAuditCatalogSync(unittest.TestCase):
         doc = (ROOT / "docs" / "audit" / "AUDIT_EVENTS.md").read_text()
         documented = set(re.findall(r"^\| `([A-Z_]+)` \|", doc, flags=re.M))
         self.assertEqual({e.value for e in EventID}, documented)
+
+    def test_severities_match_catalog(self) -> None:
+        from monfile.audit import SEVERITY, EventID
+
+        doc = (ROOT / "docs" / "audit" / "AUDIT_EVENTS.md").read_text()
+        documented = dict(re.findall(r"^\| `([A-Z_]+)` \| (\w+) \|", doc, flags=re.M))
+        self.assertEqual({e.value: SEVERITY[e] for e in EventID}, documented)
+
+
+class TestAuditFormat(unittest.TestCase):
+    def test_escaping_prevents_log_injection(self) -> None:
+        from monfile.audit import EventID, format_event
+
+        line = format_event(EventID.FILE_DETECTED, folder="a", path='/in/x\nevent=FAKE "q"\x1b', size=1)
+        self.assertNotIn("\n", line)
+        self.assertNotIn("\x1b", line)
+        self.assertIn('path="/in/x\\nevent=FAKE \\"q\\"\\x1b"', line)
+
+    def test_non_utf8_name(self) -> None:
+        from monfile.audit import escape
+
+        self.assertEqual(escape(os.fsdecode(b"bad\xff")), "bad\\xff")
 
 
 if __name__ == "__main__":

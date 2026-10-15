@@ -24,7 +24,7 @@ Its purpose is CVE monitoring and audit evidence on STIG-managed hosts.
 These modules ship with CPython, so they are covered by the CPython row above. They are listed so reviewers can map CPython CVEs to their impact on monfile.
 
 `argparse, dataclasses, enum, fcntl, fnmatch, hashlib, json, logging, logging.handlers, os, pathlib, re, secrets, signal, socket, sqlite3, stat, sys, time, datetime, tomllib, typing, abc, contextlib`
-(tests only: `unittest, tempfile`)
+(tests only: `unittest, tempfile, subprocess, shutil, tarfile`; `tests/test_packaging.py` runs `bash -n` and `build-tarball.sh` without a shell)
 
 > Keep this list in sync with `grep -rhoE "^(import|from) [a-z_.]+" src/ | sort -u`.
 
@@ -33,20 +33,25 @@ These modules ship with CPython, so they are covered by the CPython row above. T
 | Tool | Package | Purpose | CVE feeds | Last reviewed |
 |---|---|---|---|---|
 | bash | `bash` | runs install/uninstall scripts | NVD, RHSA, USN | 2026-10-12 |
-| coreutils (`install`, `sha256sum`, `chown`, `chmod`) | `coreutils` | file placement and checksum verification | NVD, RHSA, USN | 2026-10-12 |
-| shadow-utils (`useradd`, `groupadd`) | `shadow-utils` / `passwd` | create service account | NVD, RHSA, USN | 2026-10-12 |
+| coreutils (`install`, `sha256sum`, `chown`, `chmod`, `mktemp`, `mv`, `rm`, `stat`, `readlink`, `sort`, `comm`, `cut`, `date`, `sync`, `id`) | `coreutils` | file placement and checksum verification | NVD, RHSA, USN | 2026-10-14 |
+| findutils (`find`) | `findutils` | manifest completeness check, mode normalization | NVD, RHSA, USN | 2026-10-14 |
+| sed | `sed` | read the version and manifest paths | NVD, RHSA, USN | 2026-10-14 |
+| util-linux (`logger`, `runuser`, `flock`) | `util-linux` | syslog record of install steps, smoke test as `monfile`, single-instance lock | NVD, RHSA, USN | 2026-10-14 |
+| shadow-utils (`useradd`, `groupadd`, `userdel`, `groupdel`) | `shadow-utils` / `passwd` | create (and, with `uninstall.sh --purge`, remove) the service account | NVD, RHSA, USN | 2026-10-14 |
+| systemd tools (`systemctl`, `systemd-tmpfiles`) | `systemd` | install, stop/start, and reload units; create `/run/monfile` | NVD, RHSA, USN | 2026-10-14 |
 | tar / gzip | `tar`, `gzip` | unpack delivery tarball | NVD, RHSA, USN | 2026-10-12 |
 | setfacl (admin setup, documented in HOWTO §4) | `acl` | grant the `monfile` group access to watch/destination folders; not run by monfile or install.sh | NVD, RHSA, USN | 2026-10-12 |
-| fapolicyd-cli (RHEL, optional) | `fapolicyd` | add trust for `/opt/monfile` | NVD, RHSA | 2026-10-12 |
+| fapolicyd-cli (RHEL, optional) | `fapolicyd` | add, refresh, and remove trust for `/opt/monfile` (automatic when fapolicyd is running) | NVD, RHSA | 2026-10-14 |
 
 ## 3. Build/development-only tools (never shipped to target hosts)
 
 | Tool | Version | Purpose | Notes | Last reviewed |
 |---|---|---|---|---|
 | git | any current | version control | dev workstation | 2026-10-12 |
-| tar / gzip / sha256sum | OS | `build-tarball.sh` | dev/build host | 2026-10-12 |
-| GitHub Actions runner | `ubuntu-24.04` image | release builds (`.github/workflows/release.yml`) | GitHub-hosted; image updated by GitHub | 2026-10-12 |
-| actions/checkout | v7.0.1, pinned to commit `3d3c42e5aac5ba805825da76410c181273ba90b1` | checkout in the release workflow | update the pin deliberately; check GitHub advisories | 2026-10-12 |
+| tar / gzip / sha256sum / find / xargs / sed | OS (`tar`, `gzip`, `coreutils`, `findutils`, `sed`) | `build-tarball.sh`, including `MANIFEST.sha256` | dev/build host | 2026-10-14 |
+| GitHub Actions runner | `ubuntu-24.04` and `ubuntu-22.04` images | release builds (`.github/workflows/release.yml`); tests on every push (`.github/workflows/test.yml`) | GitHub-hosted; image updated by GitHub | 2026-10-12 |
+| actions/checkout | v7.0.1, pinned to commit `3d3c42e5aac5ba805825da76410c181273ba90b1` | checkout in the release and test workflows | update the pin deliberately; check GitHub advisories | 2026-10-12 |
+| python3.11 (CI only) | Ubuntu 22.04 universe, via `apt-get` on the runner | test on the minimum supported Python | same package as on target hosts | 2026-10-15 |
 | gh CLI | runner-provided | creates the GitHub release | GitHub-hosted runner tool | 2026-10-12 |
 | setuptools *(optional)* | ≥ 61 | `pip install -e .` local dev installs via pyproject.toml | not used by build-tarball.sh; never shipped | 2026-10-12 |
 | ruff *(optional)* | pin when adopted | lint/format | not yet adopted; add a pin + review date when used | — |

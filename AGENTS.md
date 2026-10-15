@@ -36,7 +36,7 @@ Read `DESIGN.md` before changing behavior.
 ```sh
 PYTHONPATH=src python3 -m monfile --help                 # CLI
 PYTHONPATH=src python3 -m unittest discover -s tests     # tests
-PYTHONPATH=src python3 -m monfile validate-config -c config/monfile.example.toml
+PYTHONPATH=src python3 -m monfile validate-config --schema-only -c config/monfile.example.toml
 ```
 
 ## Style

@@ -4,9 +4,9 @@ Watches one or more folders on Linux hosts. When a file has been **unchanged for
 
 Built for STIG-managed RHEL 8/9 and Ubuntu 22.04/24.04 hosts. Python 3.11+, standard library only.
 
-> **Status:** design / scaffolding. Modules are stubs. See `DESIGN.md`.
+> **Status:** 0.2 in development. The core is implemented and unit-tested: scanning, settle detection, copy/move with verification, dispositions, ready markers, audit events, manifests, and the CLI. It has not yet been field-tested on the target platforms.
 
-## Features (planned)
+## Features
 - Multiple watch folders, each with its own settle time, filters, recursion setting, and action chain
 - Stability detection: size + mtime unchanged for the settle window, **and** a SHA-256 match at the start and end of the window
 - Built-in actions: `copy` and `move`, with SHA-256 integrity verification of the delivered file
@@ -17,7 +17,7 @@ Built for STIG-managed RHEL 8/9 and Ubuntu 22.04/24.04 hosts. Python 3.11+, stan
 ## Quick start (development)
 ```sh
 PYTHONPATH=src python3 -m monfile --help
-PYTHONPATH=src python3 -m monfile validate-config -c config/monfile.example.toml
+PYTHONPATH=src python3 -m monfile validate-config --schema-only -c config/monfile.example.toml
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 

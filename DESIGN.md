@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Draft v0.1**: design under review, code is stubs only |
+| Status | **v0.2 (in development)**: core implemented (scan, settle, copy/move, dispositions, markers, audit, manifests, CLI); awaiting field testing |
 | Created | 2026-10-12 |
 | Targets | RHEL 8/9, Ubuntu 22.04/24.04 (STIG-managed) |
 | Runtime | Python ≥ 3.11, standard library only |
@@ -62,10 +62,11 @@ The full list with IDs is in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md). In br
 | `config.py` | Load TOML, validate the schema and permissions, and produce immutable `FolderConfig` objects |
 | `scanner.py` | Enumerate candidate files: `os.scandir`, `lstat` only, include/exclude globs, recursion, symlink rejection |
 | `stability.py` | Per-file state machine (§4) |
-| `hashing.py` | Chunked SHA-256 using `hashlib.sha256()`, with optional I/O rate limiting |
+| `hashing.py` | Chunked SHA-256 using `hashlib.sha256()` (I/O rate limiting: roadmap R2, §14) |
 | `state.py` | SQLite persistence (§8) |
-| `executor.py` | Run the action chain for a READY file, record per-action results, apply disposition |
-| `actions/` | Action base class, registry, and built-in actions (§6) |
+| `runner.py` | One scan cycle per folder (scan → evaluate → execute), vanish handling, once-per-path notices, startup recovery and temp cleanup, the daemon loop |
+| `executor.py` | Run the action chain for a READY file, record per-action results, apply disposition, remove the marker, write the manifest |
+| `actions/` | Action base class, registry, and built-in actions (§6). `actions/deliver.py` holds the shared atomic, verified delivery code. |
 | `audit.py` | Emit structured events (§10) and write manifests |
 
 ## 4. Stability algorithm
@@ -112,10 +113,10 @@ A file must satisfy **both** conditions below before it is processed.
 | File renamed in the watch dir | Old path vanishes, and the new path starts a fresh window. Writers that use `name.part` → `name` work naturally with an `exclude` for `*.part`. |
 | Truncated or replaced (new inode) | Detected by the stat tuple, so the window resets |
 | Writer pauses longer than `settle_seconds` | **Cannot be distinguished from "done"** by stat alone. Mitigations: set `ready_marker` (§4.4), use a longer `settle_seconds`, or have the writer use temp names + rename. |
-| Hardlinks | Processed per path. A same-inode duplicate is logged but not deduplicated (v1). |
+| Hardlinks | Processed per path. When two paths in the same watch folder share an inode, each extra path is logged once as `FILE_HARDLINK_DUPLICATE` (info), but not deduplicated (v1). Links to files outside the watch folder aren't detected. |
 | Zero-byte file | Processed like any other file by default. With `skip_empty = true`, a settled zero-byte file is marked SKIPPED (`FILE_SKIPPED`, `reason=empty`) and not processed. If it later grows, it is a new version (§13 Q8). |
 | Very large file | No size limit. A file over 10 GiB logs `FILE_LARGE` (warning) once, when it becomes READY, and is then processed normally (§13 Q3). |
-| Non-regular file (fifo, socket, device, dir when not recursive) | Ignored and logged once at debug level |
+| Non-regular file (fifo, socket, device, dir when not recursive) | Ignored and logged once as `FILE_IGNORED_NONREGULAR` (debug) |
 | Symlink | Never followed. Logged once as `SYMLINK_REJECTED` (warning). |
 | DONE file (disposition `leave`) changes later | Treated as a new version: `FILE_NEW_VERSION`, then it re-enters SETTLING and is processed again (§13 Q7, FR-18) |
 | Unreadable file (EACCES) | `FAILED` with error, and `PERMISSION_DENIED` event |
@@ -157,7 +158,7 @@ settle_seconds  = 300
 verify_hash     = true
 skip_empty      = false                 # true = never process zero-byte files
 manifest        = true                  # per-file JSON manifest on/off
-include         = ["*"]                 # fnmatch on basename
+include         = ["*"]                 # fnmatch on basename (exclude also prunes subdirectories when recursive)
 exclude         = [".*", "*.part", "*.tmp", "~$*", "*.crdownload", "*.filepart"]   # default if omitted
 on_success      = "move"                # leave | move | delete
 ready_marker    = ".done"               # optional; unset = settle-only (§4.4)
@@ -177,7 +178,10 @@ processed_dir   = "/data/processed/a"   # required when on_success = "move"; mus
 - A `move` action, if present, must be **last** in the chain, and `on_success` must then be `leave`, since the source is already gone.
 - Unknown keys are an **error**, not a warning. This catches typos in audited configs.
 - `settle_seconds ≥ 2 × scan_interval_seconds`. Otherwise the window can be satisfied in a single observation.
-- `ready_marker`, if set, matches `^\.[A-Za-z0-9_-]{1,32}$` (a dot followed by a short name, such as `.done` or `.ready`). It must not be matched by any `exclude` pattern, or markers would be invisible.
+- `ready_marker`, if set, matches `^\.[A-Za-z0-9_-]{1,32}$` (a dot followed by a short name, such as `.done` or `.ready`). Markers are recognized **before** include/exclude filtering, so no filter can hide them.
+- Every folder has at least one action. `processed_dir` is allowed only with `on_success = "move"`.
+- No output directory (action destination or `processed_dir`) may be inside, or contain, **any** folder's watch path.
+- `validate-config` also checks that the invoking user can read every watch folder and write every output directory (and the watch folder when files are removed from it). Run it as `monfile`. `--schema-only` skips ownership, path, and access checks, for reviewing a config off-host.
 
 ## 6. Actions
 
@@ -199,8 +203,8 @@ class Action(ABC):
 ### 6.3 Built-in actions
 | Action | Behavior |
 |---|---|
-| `copy` | Open the source with `O_NOFOLLOW`. Stream to `<dest>/.monfile-tmp-<random>` (mode 0600 during write), computing SHA-256 while streaming. Compare the stream hash to `hash_end`, `fsync` the file, re-read the temp file and verify its SHA-256, set the final mode `0640` (§7), then `os.replace` to the final name (with collision policy), and `fsync` the directory. |
-| `move` | Default: same as `copy`, then `unlink` the source. This keeps SELinux labels correct, since the file gets the destination's context, and always verifies. An optional `mode = "rename"` uses `os.rename` on the same filesystem, which is faster but keeps the source's SELinux label (§12). |
+| `copy` | Open the source with `O_NOFOLLOW`. Stream to `<dest>/.monfile-tmp-<random>` (mode 0600 during write), computing SHA-256 while streaming. Compare the stream hash to `hash_end`, `fsync` the file, re-read the temp file and verify its SHA-256, set the final mode `0640` (§7), then **hard-link** the temp file to the final name and unlink the temp file. `link()` fails if the name exists, so a file that appears concurrently is never overwritten. On filesystems without hard links, it falls back to check-then-rename. Finally `fsync` the directory. Subdirectories (with `preserve_tree`) are created and opened one component at a time with `O_NOFOLLOW`. The source is re-stat'ed before and after the copy, and the action fails if it no longer matches the settled stat. |
+| `move` | Default: same as `copy`, then `unlink` the source. This keeps SELinux labels correct, since the file gets the destination's context, and always verifies. An optional `mode = "rename"` uses `os.rename` on the same filesystem, which is faster but keeps the source's SELinux label (§12). Rename mode needs the watch folder and destination in the **same** mount. Separate `ReadWritePaths=` entries are separate mounts, so list a common parent directory instead. Otherwise the action fails with an explanatory error and never falls back silently. |
 
 ### 6.4 Future: external command action (not in v1)
 If it is ever added, it must meet all of these:
@@ -214,11 +218,12 @@ If it is ever added, it must meet all of these:
 
 ## 7. Source disposition and collisions
 - **`leave`:** the source stays put. The DONE record prevents reprocessing until the stat changes.
-- **`move`:** the source is moved to `processed_dir`, preserving the relative tree if the folder is recursive. The same collision policy applies.
+- **`move`:** the source is moved to `processed_dir`, preserving the relative tree if the folder is recursive. The collision policy is always `suffix`, since a failure after delivery would be worse than a renamed archive copy. A rename is tried when the source and `processed_dir` have the same `st_dev`. If it fails with `EXDEV`, monfile falls back to copy + verify + unlink. Under systemd, each `ReadWritePaths=` entry is a separate bind mount, and `rename()` can't cross mount points even on one filesystem.
 - **`delete`:** the source is unlinked only after **every** action succeeded and verified.
-- **Collision policies** (when the destination name exists):
+- **Identical content is not a collision:** under every policy, if the existing file's SHA-256 equals the source's, the delivery counts as already done (`COLLISION_RESOLVED policy=identical`). This makes retries idempotent, for example after a crash between delivery and recording the result.
+- **Collision policies** (when the destination name exists with different content):
   - `suffix`: `name.YYYYmmddTHHMMSSZ.ext`, plus `-N` if still taken
-  - `skip`: if the existing file's SHA-256 equals the source's, treat it as success. Otherwise fail.
+  - `skip`: same as `fail` when the content differs. It exists for configs that want identical re-deliveries accepted explicitly.
   - `fail`: mark the file FAILED
 - **Delivered file ownership and mode** (§13 Q4): owner `monfile`, mode `0640`, fixed in v1. The group is the destination directory's group when that directory is setgid (recommended; see OPERATIONS §3). Otherwise it is `monfile`'s primary group. monfile never calls `chown`, since that would need privileges it doesn't have.
 
@@ -226,13 +231,20 @@ If it is ever added, it must meet all of these:
 SQLite at `<state_dir>/state.db` (WAL mode, `0600 monfile:monfile`).
 
 ```sql
-files(folder_id, rel_path, dev, ino, size, mtime_ns, first_seen, stable_since,
-      hash_start, hash_end, status, attempts, last_error, updated_at,
+files(folder_id, rel_path BLOB, dev, ino, size, mtime_ns, first_seen, stable_since,
+      hash_start, hash_end, marker_seen_at, status, gone, attempts, last_error, updated_at,
       PRIMARY KEY(folder_id, rel_path))
-action_results(folder_id, rel_path, source_sha256, action_index, action_type,
-      ok, destination, dest_sha256, started, finished, error)
+files_history(<same columns>, archived_at)   -- superseded records (new version, name reused)
+action_results(folder_id, rel_path, source_key, action_index, action_type,
+      ok, destination, dest_sha256, bytes, started, finished, error)
+notices(folder_id, rel_path, kind)           -- "log once" bookkeeping (symlinks, orphan markers)
 meta(key PRIMARY KEY, value)   -- schema_version, created_at
 ```
+
+- `rel_path` is stored as raw bytes, so non-UTF-8 filenames round-trip.
+- `source_key` is the settled SHA-256, or `stat:<dev>:<ino>:<size>:<mtime_ns>` when `verify_hash = false`.
+- `gone = 1` marks a DONE/SKIPPED/FAILED record whose source no longer exists (consumed by a move/delete, or removed by someone else). If a file with the same name appears later, it is a **new file** (`FILE_DETECTED`). If a DONE file that is still present changes, it is a **new version** (`FILE_NEW_VERSION`). Either way the old record moves to `files_history`.
+- A file that vanishes before it is processed has its record dropped (`FILE_VANISHED`), since there is nothing to audit.
 
 - **Startup recovery:**
   - Records in `IN_PROGRESS` go back to `READY` and are re-executed. Actions are idempotent and completed steps are skipped (§6.2).
@@ -248,9 +260,9 @@ meta(key PRIMARY KEY, value)   -- schema_version, created_at
 | No shell | No subprocess usage at all in v1 |
 | No symlinks | `lstat` everywhere, `O_NOFOLLOW` on open, config paths validated with `realpath` |
 | Path traversal | Destination names are built from `rel_path` components. The resolved destination must remain under the destination root. Names containing `/`, NUL, or `..` components are rejected. |
-| Config integrity | Root-owned, not writable by group or others, otherwise refuse to start. The config is reloaded only on restart (§13 Q10). SIGHUP is ignored, so an accidental HUP can't interrupt a file mid-action. The the config hash is logged (`CONFIG_LOADED`). |
+| Config integrity | Root-owned, not writable by group or others, otherwise refuse to start. The config is reloaded only on restart (§13 Q10). SIGHUP is ignored, so an accidental HUP can't interrupt a file mid-action. The config hash is logged (`CONFIG_LOADED`). |
 | Crypto | SHA-256 only, which is FIPS 180-4 and works in FIPS mode. `hashlib.sha256(usedforsecurity=True)` is the default. |
-| Code integrity | Installed root-owned under `/opt/monfile`, bytecode precompiled at install, tarball delivered with `SHA256SUMS`. fapolicyd trust is handled per `docs/audit/STIG_CONSIDERATIONS.md`. |
+| Code integrity | Installed root-owned under `/opt/monfile`, bytecode precompiled at install, tarball delivered with `SHA256SUMS`. `install.sh` verifies every file against the tarball's `MANIFEST.sha256` in a private staging dir before installing, and adds fapolicyd trust automatically when fapolicyd is running (ADR-0010). |
 | Logging hygiene | No file contents are logged. Paths are logged with control characters escaped, which prevents log injection. |
 
 ## 10. Audit and logging
@@ -289,10 +301,12 @@ meta(key PRIMARY KEY, value)   -- schema_version, created_at
 Enable **only one** mode per host. The lock enforces this at runtime, and OPERATIONS.md documents it.
 
 Other CLI commands:
-- `validate-config`: validate the config and its permissions, then exit
-- `status`: table of tracked files and their states
+- `validate-config [--schema-only]`: validate the config, its permissions, and the invoking user's access to every folder, then exit
+- `status [--all]`: summary counts, plus a table of files that are not DONE/SKIPPED (all files with `--all`), with the last error for FAILED ones
 - `retry <folder_id> <rel_path>`: send a FAILED file back to READY
-- `--dry-run`: available on `run`/`scan`; logs the actions it would take without performing them
+- `--dry-run`: available on `run`/`scan`; logs the actions it would take as `DRY_RUN would=<event>` without performing them. Settle tracking is still recorded, but no file is moved, written, or marked DONE.
+- `-c FILE` may be given before or after the subcommand.
+- **Exit codes:** 0 success (including `LOCK_BUSY` in scan mode); 1 runtime error, `LOCK_BUSY` in run mode, or `validate-config` access problems; 2 invalid or insecure config. `monfile.service` sets `RestartPreventExitStatus=2`, so a bad config stops the service instead of restart-looping.
 
 ## 12. Platform notes
 | Topic | RHEL 8 | RHEL 9 | Ubuntu 22.04 | Ubuntu 24.04 |
@@ -302,9 +316,10 @@ Other CLI commands:
 | App allow-listing | fapolicyd (if enabled) | fapolicyd (if enabled) | n/a by default | n/a by default |
 | FIPS | possible | possible | possible (Ubuntu Pro FIPS) | possible (Ubuntu Pro FIPS) |
 
-- **SELinux:** files created in a destination inherit that directory's default context. A rename keeps the source context, which is why `move` defaults to copy + verify + unlink. The service runs `unconfined_service_t` No custom policy module ships in v1 (§13 Q11).
+- **SELinux:** files created in a destination inherit that directory's default context. A rename keeps the source context, which is why `move` defaults to copy + verify + unlink. The service runs as `unconfined_service_t`. No custom policy module ships in v1 (§13 Q11).
 - **Ubuntu 22.04:** `python3.11` comes from the *universe* component, which is approved for the target hosts (§13 Q12).
 - The interpreter path is resolved at install time and written into the launcher `/opt/monfile/bin/monfile`.
+- **Install/upgrade** (ADR-0008, ADR-0010): `install.sh` builds `/opt/monfile.new`, stops any running unit, swaps the tree in, compiles bytecode, and restarts what was running. Each step is logged to syslog with tag `monfile-install`, and `--dry-run` shows every change without making it.
 
 ## 13. Open questions
 | # | Question | Proposed default | Status |
@@ -324,3 +339,11 @@ Other CLI commands:
 | Q13 | Alerting on FAILED beyond syslog (e.g. email)? | syslog/SIEM only | **resolved 2026-10-12:** syslog/SIEM only. Alert rules live in the SIEM. |
 | Q14 | `move` default mode: copy+verify+unlink vs rename? | copy+verify+unlink | **resolved 2026-10-12:** default accepted (§6.3) |
 | Q15 | Concurrency: process files in parallel within a cycle? | sequential v1 | **resolved 2026-10-12:** default accepted (§6.2) |
+
+## 14. Roadmap (candidate features, not scheduled)
+These items are recorded so the idea and its constraints aren't lost. None are committed to a release. Adopting one requires an ADR, new REQUIREMENTS IDs, catalog events (if any), and a CHANGELOG entry, per AGENTS.md.
+
+| # | Item | Notes / constraints | Status |
+|---|---|---|---|
+| R1 | **Retention for `processed_dir` files.** An optional per-folder `processed_retention_days`. monfile would remove archived originals older than that, logging one event per file (e.g. `PROCESSED_EXPIRED` with path, size, SHA-256). | Today processed files are kept until someone removes them, and monfile never deletes them. Applies only to `processed_dir` contents, never to state or manifests (AR-08 stays). Age should come from the archive time recorded in state, not the file mtime (which is the writer's). Only files monfile itself archived should be removed, matched by state record and SHA-256. Interim option without code: a host-managed systemd-tmpfiles age rule on the processed dir (OPERATIONS §5). | proposed 2026-10-15 |
+| R2 | **Hash/copy I/O rate limiting.** An optional global `hash_max_bytes_per_second` (0 = unlimited) to cap read throughput on busy shared disks. | Originally listed in §3 as optional, but never in the config schema. Must not weaken verification: limit throughput only, never skip reads. | proposed 2026-10-15 |

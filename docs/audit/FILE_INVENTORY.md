@@ -15,7 +15,9 @@ Keep it in sync with `packaging/` (AGENTS.md).
 | `/opt/monfile/lib/monfile/**/*.py` | files | root:root | 0644 | Application code | install.sh | yes |
 | `/opt/monfile/lib/monfile/**/__pycache__/` | dir/files | root:root | 0755/0644 | Precompiled bytecode (`compileall`) | install.sh | yes |
 | `/opt/monfile/docs/**` | dirs / files | root:root | 0755 / 0644 | Documentation, including `HOWTO.md` and `OPERATIONS.md` (referenced by the units' `Documentation=`) | install.sh | yes |
-| `/opt/monfile/VERSION` | file | root:root | 0644 | Installed version + tarball SHA-256 | install.sh | yes |
+| `/opt/monfile/VERSION` | file | root:root | 0644 | `key=value`: version, tarball SHA-256 (`--tarball-sha`), install time (UTC), installing user, Python path and version | install.sh | yes |
+| `/opt/monfile/docs/monfile.example.toml` | file | root:root | 0644 | Reference config for this version (part of `docs/**`) | install.sh | yes |
+| `/opt/monfile.new/`, `/opt/monfile.old/` | dir | root:root | 0755 | **Transient**: the next and previous trees during the upgrade swap (ADR-0010). Present only if a run was interrupted; the next install.sh cleans them up. | install.sh | yes |
 | `/etc/monfile/` | dir | root:monfile | 0750 | Config dir | install.sh | **no** (preserved) |
 | `/etc/monfile/monfile.toml` | file | root:monfile | 0640 | Active config (example copied only if absent) | install.sh / admin | **no** |
 | `/etc/systemd/system/monfile.service` | file | root:root | 0644 | Daemon unit | install.sh | yes |
@@ -28,6 +30,10 @@ Keep it in sync with `packaging/` (AGENTS.md).
 | `/var/lib/monfile/` | dir | monfile:monfile | 0750 | State dir (`StateDirectory=`) | install.sh / systemd | **no** (audit data) |
 | `/var/lib/monfile/state.db` (+ `-wal`, `-shm`) | file | monfile:monfile | 0600 | State DB | monfile | **no** |
 | `/var/lib/monfile/manifests/` | dir | monfile:monfile | 0750 | Per-file manifests | monfile | **no** |
-| user/group `monfile` | account | — | — | System account, `/sbin/nologin`, no home | install.sh | optional (`--purge`) |
+| user/group `monfile` | account | — | — | System account, `nologin` shell, no home | install.sh | optional (`--purge`, only after `/etc/monfile` and `/var/lib/monfile` are removed) |
+| `/etc/fapolicyd/fapolicyd.trust` (entries under `/opt/monfile/`) | trust entries | root:fapolicyd | (fapolicyd's) | fapolicyd trust for the code and bytecode, refreshed on every install. Only when fapolicyd is running, or with `--fapolicyd`. | install.sh (via `fapolicyd-cli`) | yes |
+| `$TMPDIR/monfile-install.XXXXXXXX/` | dir | root:root | 0700 | **Transient**: verified staging copy of the release, removed when install.sh exits | install.sh | n/a |
+
+Single files (the launcher, `VERSION`, config, units, tmpfiles) are written as a temp file named `.<name>.XXXXXXXX` in the same directory, then renamed into place. A temp file is left behind only if install.sh is killed mid-write.
 
 **Not created by monfile:** watch dirs, destination dirs, and processed dirs. The host admin creates these and grants the `monfile` group access.

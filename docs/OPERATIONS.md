@@ -1,6 +1,6 @@
 # Operations Guide
 
-> Draft: the commands below describe the intended behavior. The code is not implemented yet.
+> 0.2 in development: implemented and unit-tested, but not yet field-tested on every target platform.
 
 ## 1. Prerequisites
 | OS | Install Python |
@@ -15,8 +15,11 @@
 sha256sum -c SHA256SUMS
 tar -xzf monfile-<version>.tar.gz
 cd monfile-<version>
-sudo ./packaging/install.sh            # add --fapolicyd on RHEL hosts running fapolicyd
+sudo ./packaging/install.sh --dry-run  # optional: review every change first
+sudo ./packaging/install.sh --tarball-sha "$(cut -d' ' -f1 ../SHA256SUMS)"
 ```
+`install.sh` checks every file against the tarball's `MANIFEST.sha256` before installing anything, and stops if a file was changed, added, or is a symlink. If fapolicyd is running, trust for `/opt/monfile/` is added automatically (`--no-fapolicyd` skips it, and `--fapolicyd` forces it). Each step is logged to syslog: `journalctl -t monfile-install`. Run `install.sh --help` for all options.
+
 `install.sh` creates the following. See `docs/audit/FILE_INVENTORY.md` for the full list.
 - the `monfile` account
 - `/opt/monfile`
@@ -55,6 +58,13 @@ journalctl -t monfile | grep 'event=ACTION_FAIL'
 ```
 Manifests (if enabled) are in `/var/lib/monfile/manifests/<folder_id>/YYYY/MM/DD/`.
 
+**Processed folders grow without limit.** monfile never removes archived originals (automatic expiry is roadmap item R1, DESIGN §14). Until then, a host can age them out with a systemd-tmpfiles rule, which runs as root under the host's control:
+```sh
+# /etc/tmpfiles.d/monfile-processed.conf: delete archived originals older than 30 days
+e /data/processed/a - - - 30d
+```
+A deletion made this way is **not** recorded in monfile's audit log.
+
 ## 6. Troubleshooting
 | Symptom | Check |
 |---|---|
@@ -65,9 +75,11 @@ Manifests (if enabled) are in `/var/lib/monfile/manifests/<folder_id>/YYYY/MM/DD
 | `/var/lib/monfile` growing | Expected: state and manifests are kept indefinitely (AR-08). Archive per site policy. |
 | `PERMISSION_DENIED` | Group membership, directory modes, `ReadWritePaths=` drop-in, SELinux AVCs (`ausearch -m avc -ts recent`) |
 | `CONFIG_PERMS_INSECURE` | `chown root:monfile /etc/monfile/monfile.toml && chmod 0640 …` |
-| Python files denied on RHEL | fapolicyd trust: `fapolicyd-cli --file add /opt/monfile/ && fapolicyd-cli --update` |
+| Python files denied on RHEL | fapolicyd trust. `install.sh` adds it if fapolicyd was running at install time. Otherwise, re-run `install.sh`, or run `fapolicyd-cli --file add /opt/monfile/ && fapolicyd-cli --update` |
+| `install.sh`: checksum mismatch or files not in MANIFEST | The extracted tree differs from the release. Delete it, re-verify the tarball with `sha256sum -c SHA256SUMS`, and extract again. |
+| `install.sh`: units stopped and NOT restarted | The upgrade failed after stopping them. Fix the reported error and re-run `install.sh`, or start the listed units by hand. |
 | `INTEGRITY_MISMATCH` | Source modified during copy, or storage fault. The file is FAILED and the source untouched. Investigate, then `retry`. |
 
 ## 7. Upgrade / uninstall
-- **Upgrade:** stop the service, run the new `install.sh`, then re-run `fapolicyd-cli --update` and re-baseline AIDE. The config and state are preserved.
-- **Uninstall:** `sudo ./packaging/uninstall.sh` removes the code and units. Add `--purge` to also remove the account. The config, state, and manifests are always preserved for audit, and must be removed manually if desired.
+- **Upgrade:** run the new release's `install.sh`. It stops whichever of `monfile.service` and `monfile-scan.timer` is running, swaps in the new code, refreshes fapolicyd trust, and starts the stopped units again. It doesn't change enablement, the config, or the state. Afterwards, compare your config with `/opt/monfile/docs/monfile.example.toml` for new options, and re-baseline AIDE.
+- **Uninstall:** `sudo ./packaging/uninstall.sh` stops and disables the units, then removes them and their drop-ins, the fapolicyd trust, and `/opt/monfile`. The config, state, and manifests are always preserved for audit, and must be removed manually if desired. `--purge` also removes the `monfile` account, but only after `/etc/monfile` and `/var/lib/monfile` are gone. `--dry-run` shows what would be removed.

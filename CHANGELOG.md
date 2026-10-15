@@ -5,6 +5,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- `install.sh` is implemented (ADR-0010). It verifies every file against the tarball's new `MANIFEST.sha256` in a private staging dir; creates the `monfile` account; installs `/opt/monfile` with precompiled bytecode, the config (only if absent), the state dir, and the systemd units; and smoke-tests the launcher as `monfile`. Options: `--python`, `--tarball-sha`, `--fapolicyd`/`--no-fapolicyd`, `--allow-unsupported-os`, `--dry-run`.
+- Upgrades in place: the running units are stopped, the new tree is swapped in, and the units that were running are started again. Config, state, and enablement are left unchanged.
+- fapolicyd trust is added automatically when fapolicyd is running, and refreshed on upgrade.
+- `uninstall.sh` is implemented, with `--purge` (refused while `/etc/monfile` or `/var/lib/monfile` exist) and `--dry-run`.
+- Install and uninstall steps are logged to syslog with tag `monfile-install`.
+- `build-tarball.sh` writes `MANIFEST.sha256` into the tarball and refuses symlinks. `DIST=` overrides the output dir.
+- `/opt/monfile/docs/monfile.example.toml`: the reference config ships with each install, for comparing after upgrades.
+- **The program is implemented.** Config loading and validation; polling scans that never follow symlinks; the settle state machine (stat + SHA-256 at the start and end of the window); `copy` and `move` actions with atomic, verified, no-clobber delivery; `leave`/`move`/`delete` dispositions; ready markers; `skip_empty`; audit events to syslog (or stderr, with journald priorities, if `/dev/log` is missing); per-file manifests; SQLite state with crash recovery and stale temp cleanup; and the `run`, `scan --once`, `validate-config`, `status`, and `retry` commands.
+- `validate-config --schema-only` checks a config without ownership, path, or access checks. Without it, `validate-config` also reports folders that the invoking user can't read or write.
+- `status --all` includes DONE and SKIPPED files.
+- New audit events: `FILE_IGNORED_NONREGULAR` (debug; fifos, sockets, devices, and subdirectories of non-recursive folders, logged once per path) and `FILE_HARDLINK_DUPLICATE` (info; paths in one watch folder that share an inode, logged once). Both close gaps between DESIGN §4.3 and the code.
+- A CI workflow runs the tests on every push and pull request, on Ubuntu 24.04 (Python 3.12) and 22.04 (Python 3.11, the minimum).
+- `-c FILE` is accepted before or after the subcommand.
+- Exit code 2 means an invalid or insecure config. `monfile.service` sets `RestartPreventExitStatus=2`, so a bad config no longer causes a restart loop.
+
+### Fixed
+- The processed-folder disposition failed with "Invalid cross-device link" under systemd when the watch and processed folders were separate `ReadWritePaths=` entries, even on one filesystem. It now falls back to copy + verify + unlink on `EXDEV`. A `move` action with `mode = "rename"` reports the cause instead of the bare error.
+
+### Changed
+- I/O rate limiting for hashing, listed as optional in DESIGN §3 but never specified, moved to the roadmap (DESIGN §14, R2).
+- Under every collision policy, an existing destination file with identical content counts as already delivered (`COLLISION_RESOLVED policy=identical`). This makes retries idempotent.
+- The processed-folder disposition always uses the `suffix` collision policy.
+- Ready markers are recognized before include/exclude filtering. The rule that `exclude` must not match the marker was dropped.
+- `exclude` patterns also prune subdirectories when `recursive = true`.
+
 ## [0.1.0] - 2026-10-12
 First release. **Design and documentation only:** the modules are stubs, and the tool does not process files yet.
 
