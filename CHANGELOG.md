@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Documentation
+- The example config explains that `[global]`, `[[folder]]` and `[[folder.action]]` are fixed section names, and that a folder is named by its `id`.
+
 ## [0.2.0] - 2026-10-15
 First working release: monfile now processes files. It has been manually tested on Ubuntu 24.04, but not yet on RHEL 8/9 or Ubuntu 22.04.
 

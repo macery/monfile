@@ -12,6 +12,12 @@ syslog_facility       = "daemon"                      # syslog facility for audi
 hash_chunk_bytes      = 1048576                       # read size for SHA-256 hashing
 max_files_per_cycle   = 1000                          # backpressure: max files evaluated per folder per cycle
 
+# Each [[folder]] block adds one watched folder; [[folder.action]] adds an action to
+# the folder above it. The section names are fixed keywords: [[inbound_patches]] is
+# rejected as an unknown key. Name a folder with its `id` instead (it appears in logs,
+# manifest paths, and `monfile status`/`retry`), and use a comment like the ones below
+# as a visual label.
+
 # ---------------------------------------------------------------------------
 # Folder 1: copy to an outbound share, keep a processed archive, manifests ON
 # (useful during setup/debugging).
