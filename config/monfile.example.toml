@@ -71,3 +71,33 @@ on_success     = "leave"                  # must be "leave" when the chain ends 
   collision     = "fail"
   preserve_tree = true                    # keep relative subdirectory structure
   mode          = "copy"                  # copy+verify+unlink (default) | rename (same-fs only; keeps SELinux label)
+
+# ---------------------------------------------------------------------------
+# Folder 3: folder batch. The whole folder settles (nothing added, changed or
+# removed for settle_seconds), then ONE approved program runs for the batch
+# (DESIGN §4.6, §6.4, ADR-0011). Needs the daemon (monfile.service).
+# The program must be root-owned and not group/world-writable, in root-owned
+# directories. It runs as the service account, inside the service's sandbox
+# (see /opt/monfile/docs/examples/command-sandbox.conf if it needs more).
+# ---------------------------------------------------------------------------
+[[folder]]
+id             = "wsus-xfer"
+enabled        = false
+path           = "/data/wsus/in"
+trigger        = "folder"                 # file (default) | folder
+recursive      = true
+settle_seconds = 900                      # quiet window for the WHOLE folder; longer than any sender pause
+hash_batch     = true                     # hash every file once before the run, for the audit record
+manifest       = true                     # one manifest per run
+# Not allowed with trigger = "folder": ready_marker, processed_dir, skip_empty, verify_hash = true,
+# on_success other than "leave", or any action other than a single "command".
+
+  [[folder.action]]
+  type            = "command"
+  program         = "/usr/local/libexec/wsus-xfer.sh"   # absolute; checked before every run
+  args            = []                                  # fixed strings only; never file names
+  timeout_seconds = 7200                                # SIGTERM, then SIGKILL 30 s later
+  busy_exit_code  = 75                                  # optional: "already running, try again in 5 min"
+  expect_empty    = true                                # success = exit 0 AND the folder is empty
+  # The program gets MONFILE_FOLDER_ID, MONFILE_FOLDER_PATH, MONFILE_BATCH_ID, and
+  # MONFILE_BATCH_LIST (a file of the batch's relative paths, NUL-terminated).

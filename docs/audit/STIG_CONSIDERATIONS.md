@@ -7,12 +7,12 @@ It is **guidance for the host owner and assessor**, not a certification. Validat
 
 | NIST 800-53 | Topic | How monfile addresses it | Evidence |
 |---|---|---|---|
-| AC-6 | Least privilege | Dedicated `monfile` system account (nologin), no capabilities, `NoNewPrivileges=yes`, no root at runtime | `packaging/systemd/monfile.service`, FILE_INVENTORY |
+| AC-6 | Least privilege | Dedicated `monfile` system account (nologin), no capabilities, `NoNewPrivileges=yes`, no root at runtime. Optionally an existing non-root account (`--run-as`, ADR-0011). | `packaging/systemd/monfile.service`, FILE_INVENTORY |
 | AU-2 / AU-3 | Event logging / content | Defined event catalog with what/where/outcome/identity fields | `docs/audit/AUDIT_EVENTS.md` |
 | AU-4 / AU-9 | Log storage / protection | Logs go to the host syslog/journald, so host retention, protection, and forwarding apply. monfile keeps no separate log files. | DESIGN §10 |
 | AU-12 | Audit generation | Every state transition and action outcome emits an event | REQUIREMENTS AR-01 |
 | CM-2 / CM-6 | Baseline / config settings | Config is root-owned 0640, strictly validated, and its hash is logged at load | DESIGN §5, `CONFIG_LOADED` |
-| CM-7 | Least functionality | No network listeners, no shell or exec, built-in actions only | ADR-0006, `RestrictAddressFamilies=AF_UNIX` |
+| CM-7 | Least functionality | No network listeners, no shell, built-in actions only. Folder batches may run one root-owned program per folder (no shell, checked before each run, timeout, output logged). | ADR-0011, SR-13, `RestrictAddressFamilies=AF_UNIX` |
 | CM-8 / SA-22 / RA-5 | Component inventory / vuln scanning | Third-party inventory with CPEs and a review log | `THIRD_PARTY.md` |
 | CM-11 | User-installed software | Installed under `/opt/monfile`, with an inventory and checksums. Install/upgrade/uninstall steps are logged to syslog (`monfile-install`). | FILE_INVENTORY, `SHA256SUMS`, `MANIFEST.sha256`, ADR-0010 |
 | SC-13 | Cryptographic protection | SHA-256 only (FIPS 180-4). Works with FIPS mode enabled. | ADR-0007 |
@@ -34,6 +34,15 @@ It is **guidance for the host owner and assessor**, not a certification. Validat
 - [ ] AIDE (or equivalent) covers `/opt/monfile` and `/etc/monfile`. Re-baseline after install or upgrade.
 - [ ] If FIPS is enabled, `SERVICE_START` reports `fips=true`
 
+### Hosts with folder batches (`trigger = "folder"`, ADR-0011)
+- [ ] Each `command` program is approved, installed root-owned and not group/world-writable (e.g. `/usr/local/libexec/`, `root:root 0755`), and `validate-config` passes
+- [ ] The program's SHA-256 (`COMMAND_START sha256=`) matches the approved version; AIDE covers the program
+- [ ] Any sandbox loosening for the program (`monfile.service.d/command.conf`) is documented and approved: which directives, and why
+- [ ] Any cron job that ran the program before is removed
+- [ ] SIEM alert rules also cover `COMMAND_FAIL`, `COMMAND_TIMEOUT`, `COMMAND_REFUSED`, and `BATCH_INCOMPLETE`
+- [ ] If installed with `--run-as`, the account and the trade-off (it can alter local state and manifests; syslog is authoritative) are accepted in the host's authorization
+- [ ] On fapolicyd hosts, the program and its interpreter (e.g. `/bin/bash`) are trusted
+
 ### RHEL 8/9
 - [ ] SELinux is enforcing. Watch, dest, and processed dirs have contexts that `unconfined_service_t` can access. Typically the default `var_t` or `default_t` labels are fine, but verify with `ausearch -m avc -c python3.11`.
 - [ ] If **fapolicyd** is enabled, `/opt/monfile/` is trusted (`fapolicyd-cli --file list | grep /opt/monfile`). `install.sh` adds the trust automatically when fapolicyd is running. If fapolicyd was enabled later, re-run `install.sh`. Python source and bytecode loaded by the interpreter are checked against the trust DB.
@@ -47,4 +56,6 @@ It is **guidance for the host owner and assessor**, not a certification. Validat
 ## Known gaps / open items
 - No confined SELinux domain or AppArmor profile in v1 (DESIGN §13 Q11)
 - Release artifacts are checksummed but not yet GPG-signed (SECURITY.md)
+- A `command` program is outside monfile's control: what it reads, writes, sends, and prints must be reviewed on its own (ADR-0011)
+- With `--run-as` an interactive account, local state and manifests are not protected from that account
 - State and manifests are kept indefinitely and never pruned by monfile (AR-08). The host owner must monitor `/var/lib/monfile` disk use and archive it per site retention policy.

@@ -11,6 +11,7 @@ from pathlib import Path
 from monfile import audit
 from monfile.actions.deliver import TEMP_PREFIX
 from monfile.audit import EventID
+from monfile.batch import BatchManager
 from monfile.config import Config, FolderConfig, GlobalConfig
 from monfile.executor import process_file
 from monfile.scanner import Candidate, scan_folder
@@ -22,19 +23,23 @@ TEMP_MAX_AGE = 3600  # stale temp files older than this are removed at startup (
 
 class Runner:
     def __init__(self, cfg: Config, store: StateStore, *, dry_run: bool = False,
-                 stop: threading.Event | None = None) -> None:
+                 stop: threading.Event | None = None, allow_commands: bool = True) -> None:
+        """allow_commands is False for scan --once: folder batches need the daemon (ADR-0011)."""
         self.cfg = cfg
         self.g: GlobalConfig = cfg.global_
         self.store = store
         self.dry_run = dry_run
         self.stop = stop or threading.Event()
+        self.batches = BatchManager(store, self.g, dry_run=dry_run, allow_commands=allow_commands, stop=self.stop)
 
     # --- startup ---------------------------------------------------------------------
 
     def startup(self, now: float | None = None) -> None:
+        now = time.time() if now is None else now
         self.store.recover()
         if not self.dry_run:
-            self.cleanup_temp_files(time.time() if now is None else now)
+            self.batches.recover(now)
+            self.cleanup_temp_files(now)
 
     def cleanup_temp_files(self, now: float) -> None:
         uid = os.geteuid()
@@ -63,6 +68,8 @@ class Runner:
             self.run_folder(folder, time.time() if now is None else now)
 
     def run_folder(self, folder: FolderConfig, now: float) -> None:
+        if folder.trigger == "folder" and self.batches.poll(folder, now):
+            return  # its command is running: don't touch the folder
         try:
             scan = scan_folder(folder)
         except OSError as exc:
@@ -83,6 +90,9 @@ class Runner:
                 audit.emit(EventID.FILE_IGNORED_NONREGULAR, folder=folder.id, path=folder.path / rel, type=kind)
         store.clear_notices(folder.id, "nonregular", set(scan.ignored))
         self._hardlinks(folder, scan.candidates)
+        if folder.trigger == "folder":
+            self.batches.cycle(folder, scan, now)
+            return
 
         present = {c.rel_path for c in scan.candidates}
         if folder.ready_marker:
@@ -162,7 +172,10 @@ class Runner:
 
     def run_forever(self) -> None:
         interval = self.g.scan_interval_seconds
-        while not self.stop.is_set():
-            started = time.monotonic()
-            self.run_cycle()
-            self.stop.wait(max(0.0, interval - (time.monotonic() - started)))
+        try:
+            while not self.stop.is_set():
+                started = time.monotonic()
+                self.run_cycle()
+                self.stop.wait(max(0.0, interval - (time.monotonic() - started)))
+        finally:
+            self.batches.shutdown("service stop")

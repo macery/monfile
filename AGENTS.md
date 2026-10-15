@@ -13,12 +13,12 @@ Read `DESIGN.md` before changing behavior.
 ## Hard rules (do not break without an ADR)
 1. **No third-party runtime dependencies.** No `pip install`, no vendored packages. If a dependency is truly needed, write an ADR in `docs/adr/` and add it to `THIRD_PARTY.md` *in the same change*.
 2. **Any new tool, OS package, or library**, including dev/build-only ones, must be added to `THIRD_PARTY.md`.
-3. **No shell execution.** Never use `subprocess` with `shell=True`, `os.system`, `eval`, or `exec`. External-command actions are out of scope (see ADR-0006).
+3. **No shell execution.** Never use `os.system`, `eval`, `exec`, or `subprocess` with `shell=True`. `subprocess` is used **only** by the folder-batch `command` action (`actions/command.py`, `batch.py`), with an argument list and `shell=False`, to run a root-owned program named in the config (ADR-0011). No other code starts processes.
 4. **No symlink following** in watch, destination, or processed paths. Use `follow_symlinks=False` and `O_NOFOLLOW` where applicable.
 5. **FIPS-safe crypto only:** SHA-256 via `hashlib.sha256()`. Never use MD5 or SHA-1, even for non-security purposes. FIPS-mode hosts reject them.
 6. **Every audit-relevant behavior emits an event** listed in `docs/audit/AUDIT_EVENTS.md`. When you add, rename, or remove an event, update that catalog in the same change.
 7. **Writes are atomic:** write to a temp name in the destination dir, `fsync`, verify the hash, then `os.replace`. Never leave a partial file under its final name.
-8. **Least privilege:** the code must run as the unprivileged `monfile` user. Do not add anything that requires root at runtime.
+8. **Least privilege:** the code must run as the unprivileged `monfile` user (or the existing non-root account chosen with `install.sh --run-as`, ADR-0011). Do not add anything that requires root at runtime.
 9. **Never log file contents.** Log paths, sizes, hashes, and outcomes only.
 
 ## When you change things

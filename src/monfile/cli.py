@@ -13,7 +13,7 @@ from pathlib import Path
 
 from monfile import __version__, audit
 from monfile.audit import EventID
-from monfile.config import Config, ConfigError, ConfigPermsError, access_problems, load_config
+from monfile.config import Config, ConfigError, ConfigPermsError, FolderConfig, access_problems, load_config
 from monfile.state import LOCK_PATH, LockBusy, ProcessLock, StateStore
 
 DEFAULT_CONFIG = Path("/etc/monfile/monfile.toml")
@@ -55,9 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     st = add("status", help="show tracked files and their states")
     st.add_argument("--all", action="store_true", help="include DONE and SKIPPED files")
 
-    retry = add("retry", help="return a FAILED file to READY")
+    retry = add("retry", help="return a FAILED file to READY, or re-run a held folder batch")
     retry.add_argument("folder_id")
-    retry.add_argument("rel_path")
+    retry.add_argument("rel_path", nargs="?", help="the file, relative to the watch folder (omit for trigger = \"folder\")")
     return parser
 
 
@@ -113,6 +113,11 @@ def cmd_validate(path: Path, *, schema_only: bool) -> int:
     what = "schema" if schema_only else f"config, permissions, and access for user {user!r}"
     print(f"monfile: OK: {path} ({what}); sha256={cfg.sha256}")
     for f in cfg.folders:
+        if f.trigger == "folder":
+            a = f.actions[0].params
+            print(f"  {f.id}: {f.path} trigger=folder settle={f.settle_seconds}s; command:{a['program']} "
+                  f"timeout={a.get('timeout_seconds', 7200)}s")
+            continue
         chain = " -> ".join(f"{a.type}:{a.params['destination']}" for a in f.actions)
         extra = f", marker {f.ready_marker}" if f.ready_marker else ""
         print(f"  {f.id}: {f.path} settle={f.settle_seconds}s{extra}; {chain}; on_success={f.on_success}")
@@ -171,7 +176,7 @@ def cmd_run(cfg: Config, *, mode: str, dry_run: bool) -> int:
         lock.release()
         return EXIT_ERROR
     try:
-        runner = Runner(cfg, store, dry_run=dry_run, stop=stop)
+        runner = Runner(cfg, store, dry_run=dry_run, stop=stop, allow_commands=mode == "run")
         runner.startup()
         if mode == "scan":
             runner.run_cycle()
@@ -205,8 +210,20 @@ def cmd_status(cfg: Config, *, show_all: bool) -> int:
         return EXIT_ERROR
     try:
         records = store.all_records()
+        batches = [(bf, store.get_batch(bf.batch_id) if bf.batch_id else None) for bf in store.batch_folders()]
     finally:
         store.close()
+    if batches:
+        print(f"{'FOLDER (batch)':<16} {'STATUS':<9} {'FILES':>6} {'BYTES':>14}  {'SINCE (UTC)':<20} LAST RUN")
+        for bf, last in batches:
+            since = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(bf.since))
+            run = "-"
+            if last is not None:
+                run = f"{last.batch_id} {last.outcome or 'RUNNING'}"
+                if last.exit_code is not None:
+                    run += f" (exit {last.exit_code})"
+            print(f"{bf.folder_id:<16} {bf.status:<9} {bf.files:>6} {bf.bytes:>14}  {since:<20} {run}")
+        print()
     counts: dict[str, int] = {}
     rows = []
     for r in records:
@@ -226,13 +243,23 @@ def cmd_status(cfg: Config, *, show_all: bool) -> int:
     return EXIT_OK
 
 
-def cmd_retry(cfg: Config, folder_id: str, rel_path: str) -> int:
+def cmd_retry(cfg: Config, folder_id: str, rel_path: str | None) -> int:
     if folder_id in {f.id for f in cfg.disabled}:
         print(f"monfile: folder {folder_id!r} is disabled (enabled = false); enable it to retry its files",
               file=sys.stderr)
         return EXIT_ERROR
     if folder_id not in {f.id for f in cfg.folders}:
         print(f"monfile: unknown folder id {folder_id!r}", file=sys.stderr)
+        return EXIT_ERROR
+    folder = next(f for f in cfg.folders if f.id == folder_id)
+    if folder.trigger == "folder":
+        if rel_path is not None:
+            print(f"monfile: {folder_id} is a folder batch (trigger = \"folder\"); run: monfile retry {folder_id}",
+                  file=sys.stderr)
+            return EXIT_ERROR
+        return _retry_batch(cfg, folder)
+    if rel_path is None:
+        print(f"monfile: retry {folder_id} needs the file's path relative to {folder.path}", file=sys.stderr)
         return EXIT_ERROR
     store = _open_store(cfg, readonly=False)
     if store is None:
@@ -250,8 +277,31 @@ def cmd_retry(cfg: Config, folder_id: str, rel_path: str) -> int:
             store.put(rec.with_(status="READY", last_error=None))
     finally:
         store.close()
-    folder = next(f for f in cfg.folders if f.id == folder_id)
     audit.emit(EventID.RETRY_REQUESTED, folder=folder_id, path=folder.path / rel_path, user=os.getuid(),
                sudo_user=os.environ.get("SUDO_USER"))
     print(f"monfile: {folder_id}/{rel_path} queued for retry on the next scan cycle")
+    return EXIT_OK
+
+
+def _retry_batch(cfg: Config, folder: FolderConfig) -> int:
+    """Re-run a HELD (or finished, non-empty) folder batch on the next cycle, without a new quiet window."""
+    from monfile.batch import HELD, IDLE, PENDING
+
+    store = _open_store(cfg, readonly=False)
+    if store is None:
+        return EXIT_ERROR
+    try:
+        with store.tx():
+            bf = store.get_batch_folder(folder.id)
+            if bf is None or bf.status not in (HELD, IDLE) or not bf.snapshot:
+                state = "empty" if bf is not None and not bf.snapshot else (bf.status if bf else "not tracked")
+                print(f"monfile: {folder.id} is {state}; only a held batch (after a failure) can be retried",
+                      file=sys.stderr)
+                return EXIT_ERROR
+            store.put_batch_folder(bf.with_(status=PENDING, retry_at=None))
+    finally:
+        store.close()
+    audit.emit(EventID.RETRY_REQUESTED, folder=folder.id, path=folder.path, user=os.getuid(),
+               sudo_user=os.environ.get("SUDO_USER"))
+    print(f"monfile: {folder.id} queued to run its command on the next scan cycle (if the folder is unchanged)")
     return EXIT_OK

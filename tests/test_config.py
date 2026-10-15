@@ -105,7 +105,7 @@ class TestConfigFile(TreeCase):
     def test_example_config_schema(self) -> None:
         example = Path(__file__).resolve().parent.parent / "config" / "monfile.example.toml"
         cfg = load_config(example, check_perms=False, check_paths=False)
-        self.assertEqual([f.id for f in cfg.disabled], ["inbound-a", "bulk-drop"])
+        self.assertEqual([f.id for f in cfg.disabled], ["inbound-a", "bulk-drop", "wsus-xfer"])
 
     def test_example_config_folders_ship_disabled(self) -> None:
         """A copied example must load (its /data paths don't exist) and watch nothing until edited."""

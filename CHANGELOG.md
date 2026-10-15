@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **Folder batches** (`trigger = "folder"`, FR-22, ADR-0011). A folder can be settled as a whole: once nothing in it has been added, changed or removed for `settle_seconds`, one action runs for the whole batch. While it runs, other folders keep being scanned. Folder batches need the daemon.
+- **`command` action** (FR-23, SR-13, AR-09), for folder batches only. Runs one program named in the config, without a shell, with fixed `args`, a fixed environment, and a timeout (`timeout_seconds`, default 2 h; SIGTERM to its process group, then SIGKILL). Before every run monfile checks that the program and every directory above it are root-owned and not group/world-writable, with no symlinks, and logs its SHA-256. Each output line is logged (`COMMAND_OUTPUT`). `busy_exit_code` marks "already running, retry in 5 minutes". `expect_empty` (default on) makes success require an empty folder. A failed batch is held until the folder changes or `monfile retry <folder>`. Each run gets a manifest listing the batch's files with SHA-256 (`hash_batch`, default on). The program receives `MONFILE_FOLDER_ID`, `MONFILE_FOLDER_PATH`, `MONFILE_BATCH_ID`, and `MONFILE_BATCH_LIST` (a NUL-separated list of the batch's files).
+- New events: `BATCH_SETTLING`, `BATCH_READY`, `COMMAND_START`, `COMMAND_OUTPUT`, `COMMAND_OUTPUT_TRUNCATED`, `COMMAND_BUSY`, `COMMAND_FAIL` (error), `COMMAND_TIMEOUT`, `COMMAND_INTERRUPTED`, `COMMAND_REFUSED` (error), `BATCH_DONE`, `BATCH_INCOMPLETE`.
+- `install.sh --run-as USER`: run the service as an existing non-root account (and its primary group) instead of creating `monfile`. It writes a `User=`/`Group=` drop-in for both service units, sets `/run/monfile`'s owner, re-owns `/var/lib/monfile` and changes the config's group when the account changes, and is remembered on upgrades (`--run-as monfile` switches back). It refuses root and never creates or changes the account.
+- `monfile retry <folder_id>` (no path) re-runs a held folder batch. `status` lists batch folders with their state and last run. `validate-config` shows each batch folder's program and timeout.
+- `docs/examples/command-sandbox.conf`: an example drop-in for loosening the sandbox for a batch program that needs network, `/home`, or more writable paths.
+
+### Changed
+- ADR-0011 supersedes ADR-0006 ("no external commands"). AGENTS.md rule 3 now allows `subprocess` only in the `command` action, with `shell=False`. SR-01 and SR-03 are reworded to match.
+- The state database schema is now version 2 (three new batch tables). A version-1 database is upgraded in place on first start. **An older monfile will refuse the upgraded database**, so downgrading needs a backup of `/var/lib/monfile/state.db` taken before upgrading.
+- The example config has a third (disabled) folder showing a folder batch.
+
 ## [0.3.0] - 2026-10-15
 Adds a per-folder `enabled` switch and ships the example folders disabled. The core is unchanged from 0.2.0; the new switch is covered by unit tests. Manually tested on Ubuntu 24.04, but not yet on RHEL 8/9 or Ubuntu 22.04.
 

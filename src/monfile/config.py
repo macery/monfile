@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 Disposition = Literal["leave", "move", "delete"]
+Trigger = Literal["file", "folder"]
 Collision = Literal["suffix", "skip", "fail"]
 
 FOLDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -44,6 +45,8 @@ class FolderConfig:
     id: str
     path: Path
     enabled: bool = True  # false = fully parsed but never scanned; path checks skipped
+    trigger: Trigger = "file"  # "folder" = settle the whole folder, then run one command (§4.6)
+    hash_batch: bool = True  # folder trigger: hash every file just before the command runs
     recursive: bool = False
     settle_seconds: int = 300
     verify_hash: bool = True
@@ -58,12 +61,12 @@ class FolderConfig:
 
     @property
     def consumes_source(self) -> bool:
-        """True if the source is gone after success (move action, or move/delete disposition)."""
-        return self.on_success != "leave" or any(a.type == "move" for a in self.actions)
+        """True if the source is gone after success (move action, move/delete disposition, or a batch command)."""
+        return self.trigger == "folder" or self.on_success != "leave" or any(a.type == "move" for a in self.actions)
 
     def output_roots(self) -> list[Path]:
         """Every directory monfile writes into for this folder."""
-        roots = [Path(a.params["destination"]) for a in self.actions]
+        roots = [Path(a.params["destination"]) for a in self.actions if "destination" in a.params]
         if self.processed_dir is not None:
             roots.append(self.processed_dir)
         return roots
@@ -269,6 +272,21 @@ def _parse_folder(raw: Any, index: int, g: GlobalConfig, errors: list[str], chec
         errors.append(f"{where}: processed_dir is required when on_success = \"move\"")
     elif on_success != "move" and "processed_dir" in t:
         errors.append(f"{where}: processed_dir is only allowed when on_success = \"move\"")
+    trigger = _get(t, "trigger", str, d.trigger, where, errors)
+    if trigger not in ("file", "folder"):
+        errors.append(f"{where}: trigger must be \"file\" or \"folder\"")
+        trigger = "file"
+    batch = trigger == "folder"
+    if batch:
+        for key in ("ready_marker", "processed_dir", "skip_empty"):
+            if key in t:
+                errors.append(f"{where}: {key} is not supported with trigger = \"folder\"")
+        if t.get("verify_hash") is True:
+            errors.append(f"{where}: verify_hash is not used with trigger = \"folder\" (see hash_batch)")
+        if on_success != "leave":
+            errors.append(f"{where}: on_success must be \"leave\" with trigger = \"folder\" (the command consumes the files)")
+    elif "hash_batch" in t:
+        errors.append(f"{where}: hash_batch is only allowed with trigger = \"folder\"")
     marker = t.get("ready_marker")
     if marker is not None and (not isinstance(marker, str) or not READY_MARKER_RE.match(marker)):
         errors.append(f"{where}: ready_marker must match {READY_MARKER_RE.pattern}, e.g. \".done\"")
@@ -279,6 +297,9 @@ def _parse_folder(raw: Any, index: int, g: GlobalConfig, errors: list[str], chec
     if not isinstance(raw_actions, list) or not raw_actions:
         errors.append(f"{where}: at least one [[folder.action]] is required")
         raw_actions = []
+    elif batch and (len(raw_actions) != 1 or not isinstance(raw_actions[0], dict)
+                    or raw_actions[0].get("type") != "command"):
+        errors.append(f"{where}: trigger = \"folder\" needs exactly one [[folder.action]], of type \"command\"")
     for ai, raw_action in enumerate(raw_actions):
         aw = f"{where} action #{ai + 1}"
         at = _table(raw_action, aw, errors)
@@ -295,6 +316,17 @@ def _parse_folder(raw: Any, index: int, g: GlobalConfig, errors: list[str], chec
         except ConfigError as exc:
             errors.append(f"{aw}: {exc}")
             continue
+        if atype == "command":
+            if not batch:
+                errors.append(f"{aw}: the command action requires trigger = \"folder\"")
+            elif check:
+                from monfile.actions.command import ProgramError, check_program
+                try:
+                    check_program(Path(params["program"]))
+                except ProgramError as exc:
+                    errors.append(f"{aw}: {exc}")
+            actions.append(ActionConfig(str(atype), params))
+            continue
         _abs_path(params["destination"], "destination", aw, errors, check=check)
         if cls.consumes_source and ai != len(raw_actions) - 1:
             errors.append(f"{aw}: a {atype} action must be last in the chain")
@@ -308,9 +340,11 @@ def _parse_folder(raw: Any, index: int, g: GlobalConfig, errors: list[str], chec
         id=fid,
         path=path,
         enabled=enabled,
+        trigger=trigger,  # type: ignore[arg-type]
+        hash_batch=_get(t, "hash_batch", bool, d.hash_batch, where, errors),
         recursive=_get(t, "recursive", bool, d.recursive, where, errors),
         settle_seconds=settle,
-        verify_hash=_get(t, "verify_hash", bool, d.verify_hash, where, errors),
+        verify_hash=False if batch else _get(t, "verify_hash", bool, d.verify_hash, where, errors),
         skip_empty=_get(t, "skip_empty", bool, d.skip_empty, where, errors),
         manifest=_get(t, "manifest", bool, d.manifest, where, errors),
         include=_str_list(t, "include", d.include, where, errors),
@@ -361,4 +395,7 @@ def access_problems(cfg: Config) -> list[str]:
             need(f.path, os.W_OK | os.X_OK, f"{f.id} removes files from its watch folder")
         for out in f.output_roots():
             need(out, os.W_OK | os.X_OK, f"output of {f.id}")
+        for a in f.actions:
+            if a.type == "command":
+                need(Path(a.params["program"]), os.X_OK, f"program of {f.id}")
     return problems

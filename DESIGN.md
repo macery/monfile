@@ -14,19 +14,21 @@
 monfile watches configured folders for files dropped by people or other systems.
 When a file has been **stable** for a configurable window (default 300 s), monfile runs that folder's **workflow**, which is an ordered chain of built-in actions such as copy or move.
 It then disposes of the source file and records an auditable result.
+A folder can instead be settled **as a whole** (`trigger = "folder"`): once nothing in it has changed for the window, monfile runs one approved program for the batch and records the outcome (§4.6, ADR-0011).
 
 ### In scope (v1)
 - Multiple watch folders, each with independent settings
 - Stability detection for local-disk watch folders (the deployment target, §13 Q5). The algorithm does not depend on server clocks, so it also tolerates NFS/CIFS, but that is not tested in v1.
 - Optional per-folder ready-marker files (`name.done`) for writers that pause mid-transfer (§4.4, ADR-0009)
 - Built-in actions `copy` and `move`, with SHA-256 integrity verification
+- Folder batches: settle a whole folder, then run one approved, root-owned program (`command` action) with a timeout, captured output, and a per-batch audit record (§4.6, §6.4, ADR-0011)
 - Source disposition: `leave`, `move` (to a processed dir), or `delete`
 - Audit trail through syslog/journald, plus optional per-folder JSON manifests
 - Daemon mode and one-shot (timer/cron) mode
 - Tarball + install script delivery
 
 ### Non-goals (v1)
-- Running arbitrary external commands or scripts (see ADR-0006 and §6.4)
+- Running arbitrary external commands. The only exception is the folder-batch `command` action, which runs one root-owned program named in the config, without a shell (§6.4, ADR-0011, superseding ADR-0006).
 - Content inspection, AV scanning, or format conversion. These could become future actions.
 - Remote destinations over network protocols (SFTP, S3, HTTP). Network mounts are only treated as local paths.
 - Real-time (sub-second) reaction. The settle window dominates latency anyway.
@@ -66,6 +68,7 @@ The full list with IDs is in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md). In br
 | `state.py` | SQLite persistence (§8) |
 | `runner.py` | One scan cycle per folder (scan → evaluate → execute), vanish handling, once-per-path notices, startup recovery and temp cleanup, the daemon loop |
 | `executor.py` | Run the action chain for a READY file, record per-action results, apply disposition, remove the marker, write the manifest |
+| `batch.py` | Folder batches (§4.6): folder snapshots and the quiet window, starting the command, polling it each cycle (timeout, output, outcome), the batch manifest, shutdown and restart recovery |
 | `actions/` | Action base class, registry, and built-in actions (§6). `actions/deliver.py` holds the shared atomic, verified delivery code. |
 | `audit.py` | Emit structured events (§10) and write manifests |
 
@@ -135,6 +138,37 @@ Set `ready_marker = ".done"` on a folder for writers that can pause longer than 
 ### 4.5 Cost
 With `verify_hash = true`, each file is read **3×**: `hash_start`, `hash_end`, and the copy (the hash is computed while streaming and compared to `hash_end`). The destination is then read once more for verification. Folders with very large files can set `verify_hash = false`, which still keeps the destination integrity check.
 
+### 4.6 Folder batches (`trigger = "folder"`, ADR-0011)
+For senders that deliver a **set** of files that must be handled together (e.g. a monthly WSUS update batch), a folder can be settled as a whole and handed to one program.
+
+- **Snapshot:** each cycle, the folder's candidate files (after the usual filters, symlink and special-file rejection, and recursion) are reduced to a SHA-256 over the sorted list of `(path, size, mtime, inode)`. Content is not read during settling, so large batches cost only a directory walk per cycle. `verify_hash` is not used.
+- **States** (table `batch_folders`):
+
+| State | Meaning | Leaves when |
+|---|---|---|
+| `IDLE` | Folder empty, or the last run succeeded | The listing differs from the one recorded → `SETTLING` (`BATCH_SETTLING`) |
+| `SETTLING` | Listing first seen at `since` | Any change restarts the window. Unchanged for `settle_seconds` → start the run |
+| `RUNNING` | The command is running (at most one per folder) | It exits, times out, or the service stops |
+| `PENDING` | Start as soon as `retry_at` passes, without a new window | Listing changed → `SETTLING`; otherwise start |
+| `HELD` | The last run failed, timed out, left files behind, or was refused | The listing changes → `SETTLING`, or `monfile retry <folder>` → `PENDING` |
+
+- **Starting a run:** the program is checked (§6.4, SR-13) and, with `hash_batch = true` (default), every file is hashed once. A file that changed while being hashed sends the folder back to `SETTLING`. Then `BATCH_READY`, the batch record and its file list are stored, and the program is started (`COMMAND_START`).
+- **While it runs**, scan cycles continue for other folders. The batch folder itself is not scanned; each cycle only checks whether the program has exited or passed its timeout.
+- **Outcomes** (the folder is rescanned after exit):
+
+| Outcome | Condition | Event | Next state |
+|---|---|---|---|
+| DONE | exit 0, and the folder is empty (or `expect_empty = false`) | `BATCH_DONE` | `IDLE` (waits for a different listing) |
+| INCOMPLETE | exit 0 but files remain and `expect_empty = true` | `BATCH_INCOMPLETE` | `HELD` |
+| BUSY | exit code equals `busy_exit_code` | `COMMAND_BUSY` | `PENDING`, retried after 300 s |
+| FAIL | any other exit, killed by a signal, or could not start | `COMMAND_FAIL` | `HELD` |
+| TIMEOUT | ran past `timeout_seconds`: SIGTERM to its process group, SIGKILL 30 s later | `COMMAND_TIMEOUT` | `HELD` |
+| INTERRUPTED | service stop (SIGTERM, SIGKILL after 30 s), or found `RUNNING` at startup after a crash | `COMMAND_INTERRUPTED` | `SETTLING` (runs again after a fresh quiet window) |
+
+  `HELD` records the listing **after** the run, so a failed run is not repeated until something in the folder changes or an operator runs `monfile retry <folder>`. A failure that left the folder partly consumed therefore settles and runs again once the window passes.
+- **Known limit:** without a sender-side "batch complete" signal, a transfer that stalls for longer than `settle_seconds` is treated as complete. Size `settle_seconds` above the sender's longest expected pause. A folder-level ready marker could be added later.
+- **Timer mode:** a run can last hours, so folder batches need the daemon. `scan --once` logs `COMMAND_REFUSED` for these folders and does nothing else with them.
+
 ## 5. Configuration schema
 
 Path: `/etc/monfile/monfile.toml`, owned `root:monfile`, mode `0640`. monfile **refuses to start** if the config is group- or world-writable, or not owned by root (SR-06).
@@ -162,6 +196,7 @@ manifest        = true                  # per-file JSON manifest on/off
 include         = ["*"]                 # fnmatch on basename (exclude also prunes subdirectories when recursive)
 exclude         = [".*", "*.part", "*.tmp", "~$*", "*.crdownload", "*.filepart"]   # default if omitted
 on_success      = "move"                # leave | move | delete
+trigger         = "file"                # file (default) | folder: settle the whole folder, then run one command (§4.6)
 ready_marker    = ".done"               # optional; unset = settle-only (§4.4)
 processed_dir   = "/data/processed/a"   # required when on_success = "move"; must be outside `path`
 
@@ -182,6 +217,8 @@ processed_dir   = "/data/processed/a"   # required when on_success = "move"; mus
 - `ready_marker`, if set, matches `^\.[A-Za-z0-9_-]{1,32}$` (a dot followed by a short name, such as `.done` or `.ready`). Markers are recognized **before** include/exclude filtering, so no filter can hide them.
 - `[global]`, `[[folder]]` and `[[folder.action]]` are the only section names. A folder is named by its `id`.
 - `enabled = false` (default `true`) turns a folder off. A disabled folder's block is still fully schema-checked, and its `id` still counts for uniqueness, but its paths are not checked for existence, symlinks, overlap, or access, and it is never scanned. Its state records are kept, so re-enabling it resumes where it stopped. At startup monfile logs `FOLDER_DISABLED` for each one. At least one `[[folder]]` block is required, but all of them may be disabled; the service then runs and watches nothing. The shipped example has every folder disabled. Like any config change, toggling `enabled` takes effect on restart (§13 Q10).
+- `trigger = "folder"` requires exactly one action, of type `command`, and `on_success = "leave"`. It does not allow `ready_marker`, `processed_dir`, `skip_empty`, or `verify_hash = true`. `hash_batch` is allowed only with it. A `command` action is allowed only with it.
+- A `command` action's `program` must pass the checks in §6.4 at load time (skipped by `--schema-only` and for disabled folders) and again before every run.
 - Every folder has at least one action. `processed_dir` is allowed only with `on_success = "move"`.
 - No output directory (action destination or `processed_dir`) may be inside, or contain, **any** folder's watch path.
 - `validate-config` also checks that the invoking user can read every watch folder and write every output directory (and the watch folder when files are removed from it). Run it as `monfile`. `--schema-only` skips ownership, path, and access checks, for reviewing a config off-host.
@@ -209,15 +246,22 @@ class Action(ABC):
 | `copy` | Open the source with `O_NOFOLLOW`. Stream to `<dest>/.monfile-tmp-<random>` (mode 0600 during write), computing SHA-256 while streaming. Compare the stream hash to `hash_end`, `fsync` the file, re-read the temp file and verify its SHA-256, set the final mode `0640` (§7), then **hard-link** the temp file to the final name and unlink the temp file. `link()` fails if the name exists, so a file that appears concurrently is never overwritten. On filesystems without hard links, it falls back to check-then-rename. Finally `fsync` the directory. Subdirectories (with `preserve_tree`) are created and opened one component at a time with `O_NOFOLLOW`. The source is re-stat'ed before and after the copy, and the action fails if it no longer matches the settled stat. |
 | `move` | Default: same as `copy`, then `unlink` the source. This keeps SELinux labels correct, since the file gets the destination's context, and always verifies. An optional `mode = "rename"` uses `os.rename` on the same filesystem, which is faster but keeps the source's SELinux label (§12). Rename mode needs the watch folder and destination in the **same** mount. Separate `ReadWritePaths=` entries are separate mounts, so list a common parent directory instead. Otherwise the action fails with an explanatory error and never falls back silently. |
 
-### 6.4 Future: external command action (not in v1)
-If it is ever added, it must meet all of these:
-- an absolute-path allow-list in root-owned config
-- `subprocess.run([...], shell=False)` with a fixed argv template
-- a scrubbed environment
-- a timeout
-- the same service user
-- stdout/stderr size-capped and logged
-- a new ADR and REQUIREMENTS entries
+### 6.4 The `command` action (folder batches only, ADR-0011)
+```toml
+  [[folder.action]]
+  type            = "command"
+  program         = "/usr/local/libexec/wsus-xfer.sh"  # absolute path, root-owned
+  args            = []                                 # fixed strings; never file names (default [])
+  timeout_seconds = 7200                               # 1 … 604800 (default 7200)
+  busy_exit_code  = 75                                 # optional: "another job is running, try later"
+  expect_empty    = true                               # success also requires an empty folder (default true)
+```
+- **Program checks (SR-13), at config load and before every run:** the path is absolute, normalized, and has no symlink in any component; the program is a regular, executable file owned by root and not group- or world-writable; every directory above it is root-owned and not group- or world-writable. Only root can change what runs. Its SHA-256 is computed on the same open file and logged (`COMMAND_START sha256=`) and stored in the batch record and manifest. A failure logs `COMMAND_REFUSED` and holds the batch. The remaining window between the check and `execve` can only be used by root.
+- **Execution:** `subprocess.Popen([program, *args], shell=False)`. No shell, so no globbing, expansion, or injection; a `#!` script is started by the kernel. stdin is `/dev/null`, the working directory is the watch folder, all other fds are closed, and the program gets its own session and process group so a timeout or stop reaches everything it started.
+- **Environment:** fixed and minimal, never inherited: `PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin`, `HOME`, `USER`, `LOGNAME` of the service account, `LANG=C.UTF-8`, `MONFILE_FOLDER_ID`, `MONFILE_FOLDER_PATH`, `MONFILE_BATCH_ID`, and `MONFILE_BATCH_LIST`: a file listing the batch's relative paths, each terminated by NUL (filenames may contain newlines). Read it with `while IFS= read -r -d '' f; do …; done < "$MONFILE_BATCH_LIST"`. It is removed when the run ends.
+- **Output:** stdout and stderr are combined and read on a background thread. Each line is logged as `COMMAND_OUTPUT` (escaped, at most 1,000 characters). After 10,000 lines one `COMMAND_OUTPUT_TRUNCATED` is logged and the rest are discarded. The last 50 lines go in the batch manifest. The program must not print file contents (rule 9 applies to what it prints too).
+- **Sandbox:** the program runs as the service account **inside the service's systemd sandbox** (§9): no network, no `/home`, no privilege gain, read-only filesystem except `ReadWritePaths=`, and the syscall filter, which **kills** a process (SIGSYS) that calls anything in `@privileged` or `@resources` (e.g. `chown`, `setrlimit`, `nice`; gpg, `rsync -a` and `cp -p` make such calls). A program that needs more gets a per-host drop-in that loosens only what it needs (example: `docs/examples/command-sandbox.conf`). That loosening applies to monfile too, so it is a host-owner decision recorded in their accreditation.
+- **Idempotence:** monfile may run the program again for the same files (after an interrupted run, a busy exit, or an operator retry). The program must tolerate that (ADR-0011).
 
 ## 7. Source disposition and collisions
 - **`leave`:** the source stays put. The DONE record prevents reprocessing until the stat changes.
@@ -241,8 +285,13 @@ files_history(<same columns>, archived_at)   -- superseded records (new version,
 action_results(folder_id, rel_path, source_key, action_index, action_type,
       ok, destination, dest_sha256, bytes, started, finished, error)
 notices(folder_id, rel_path, kind)           -- "log once" bookkeeping (symlinks, orphan markers)
-meta(key PRIMARY KEY, value)   -- schema_version, created_at
+batch_folders(folder_id PRIMARY KEY, status, snapshot, since, files, bytes, retry_at, batch_id, updated_at)
+batches(batch_id PRIMARY KEY, folder_id, snapshot, files, bytes, program, program_sha256, pid,
+      started, finished, exit_code, outcome, output_lines, error)       -- one row per command run
+batch_files(batch_id, rel_path BLOB, size, mtime_ns, sha256)            -- the files each run started on
+meta(key PRIMARY KEY, value)   -- schema_version (2), created_at
 ```
+Schema version 2 added the three batch tables. A version-1 database is upgraded in place at startup; an older monfile refuses a version-2 database.
 
 - `rel_path` is stored as raw bytes, so non-UTF-8 filenames round-trip.
 - `source_key` is the settled SHA-256, or `stat:<dev>:<ino>:<size>:<mtime_ns>` when `verify_hash = false`.
@@ -252,15 +301,16 @@ meta(key PRIMARY KEY, value)   -- schema_version, created_at
 - **Startup recovery:**
   - Records in `IN_PROGRESS` go back to `READY` and are re-executed. Actions are idempotent and completed steps are skipped (§6.2).
   - Stale `.monfile-tmp-*` files in configured destinations older than 1 h are removed, with a `TEMP_CLEANUP` event.
+  - Folder batches found `RUNNING` (monfile died mid-run; systemd stops the rest of the service's processes) are logged as `COMMAND_INTERRUPTED reason="monfile restarted"` and go back to `SETTLING`. Leftover batch list files are removed.
 - **Retention** (§13 Q6, AR-08): monfile never prunes state records or deletes manifests. Both are kept indefinitely as audit records. The host owner sizes `/var/lib/monfile` accordingly and archives it by site procedure.
 - **Locking:** `fcntl.flock` on `/run/monfile/monfile.lock`. The daemon holds it for its lifetime. A timer run that can't get the lock exits 0 with a `LOCK_BUSY` info event. This also prevents running both modes at once.
 
 ## 9. Security model
 | Control | Implementation |
 |---|---|
-| Least privilege | A dedicated system user and group `monfile` (nologin shell, no home). Group ACLs or memberships on watch/dest dirs are granted by the host admin. |
+| Least privilege | A dedicated system user and group `monfile` (nologin shell, no home) by default. `install.sh --run-as USER` uses an existing unprivileged account instead (ADR-0011), when site policy forbids new accounts; root is refused. Group ACLs or memberships on watch/dest dirs are granted by the host admin. **Trade-off:** with an interactive account, anyone who can log in as it can alter the state database and manifests, so syslog (forwarded off-host) is then the authoritative record. |
 | systemd hardening | `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, an empty `CapabilityBoundingSet`, `RestrictAddressFamilies=AF_UNIX`, `ReadWritePaths` limited to configured dirs (via a drop-in), `UMask=0027`, and more (see the unit file) |
-| No shell | No subprocess usage at all in v1 |
+| No shell | `subprocess` is used only by the folder-batch `command` action: an argument list with `shell=False`, a root-owned program checked before every run, a fixed environment, a timeout (§6.4, SR-13). Nothing else starts processes. |
 | No symlinks | `lstat` everywhere, `O_NOFOLLOW` on open, config paths validated with `realpath` |
 | Path traversal | Destination names are built from `rel_path` components. The resolved destination must remain under the destination root. Names containing `/`, NUL, or `..` components are rejected. |
 | Config integrity | Root-owned, not writable by group or others, otherwise refuse to start. The config is reloaded only on restart (§13 Q10). SIGHUP is ignored, so an accidental HUP can't interrupt a file mid-action. The config hash is logged (`CONFIG_LOADED`). |
@@ -295,6 +345,8 @@ meta(key PRIMARY KEY, value)   -- schema_version, created_at
 }
 ```
 
+Folder batches write one manifest per run (except busy exits), named `<utc-ts>_<snapshot[:12]>_batch-<batch_id>.json`, with `"kind": "batch"`: the batch's files (path, size, mtime, SHA-256), the program path, SHA-256 and args, pid, start/finish, duration, exit code, outcome, timeout, output line count, the last 50 output lines, and the number of files left.
+
 ## 11. Run modes
 | Mode | Command | Unit | Notes |
 |---|---|---|---|
@@ -302,11 +354,15 @@ meta(key PRIMARY KEY, value)   -- schema_version, created_at
 | One-shot | `monfile scan --once` | `monfile-scan.service` + `monfile-scan.timer` (e.g. every 1 min) | Same code path, one cycle per invocation. State in SQLite makes the windows span runs. |
 
 Enable **only one** mode per host. The lock enforces this at runtime, and OPERATIONS.md documents it.
+Folders with `trigger = "folder"` need the daemon (§4.6).
+On SIGTERM the daemon stops running batch commands (SIGTERM, then SIGKILL after 30 s; `COMMAND_INTERRUPTED`), which fits within the unit's `TimeoutStopSec=300`.
 
 Other CLI commands:
 - `validate-config [--schema-only]`: validate the config, its permissions, and the invoking user's access to every folder, then exit
 - `status [--all]`: summary counts, plus a table of files that are not DONE/SKIPPED (all files with `--all`), with the last error for FAILED ones
 - `retry <folder_id> <rel_path>`: send a FAILED file back to READY
+- `retry <folder_id>` (folder batches): run the command again on the next cycle for a `HELD` batch, without a new quiet window. Takes effect only if the listing is unchanged; otherwise the folder settles again.
+- `status` also lists each batch folder's state, file count, bytes, and its last run's outcome and exit code.
 - `--dry-run`: available on `run`/`scan`; logs the actions it would take as `DRY_RUN would=<event>` without performing them. Settle tracking is still recorded, but no file is moved, written, or marked DONE.
 - `-c FILE` may be given before or after the subcommand.
 - **Exit codes:** 0 success (including `LOCK_BUSY` in scan mode); 1 runtime error, `LOCK_BUSY` in run mode, or `validate-config` access problems; 2 invalid or insecure config. `monfile.service` sets `RestartPreventExitStatus=2`, so a bad config stops the service instead of restart-looping.
@@ -342,6 +398,12 @@ Other CLI commands:
 | Q13 | Alerting on FAILED beyond syslog (e.g. email)? | syslog/SIEM only | **resolved 2026-10-12:** syslog/SIEM only. Alert rules live in the SIEM. |
 | Q14 | `move` default mode: copy+verify+unlink vs rename? | copy+verify+unlink | **resolved 2026-10-12:** default accepted (§6.3) |
 | Q15 | Concurrency: process files in parallel within a cycle? | sequential v1 | **resolved 2026-10-12:** default accepted (§6.2) |
+| Q16 | Folder-batch names: `trigger = "file" \| "folder"`, action `command`, `busy_exit_code` (75 suggested), `expect_empty` | as listed | **resolved 2026-10-15:** proposal accepted ("go ahead and build it"; ADR-0011) |
+| Q17 | Hash every batch file before the command runs? | yes (`hash_batch = true`) | **resolved 2026-10-15:** default accepted |
+| Q18 | Re-run a failed batch automatically? | no: wait for a change or `monfile retry`; busy exits retry after 300 s | **resolved 2026-10-15:** default accepted. An optional `retry_after_seconds` was not built. |
+| Q19 | Severity of `COMMAND_FAIL`? | error (like `ACTION_FAIL`) | **resolved 2026-10-15:** error. The customer said warning was acceptable; error was chosen for SIEM alerting consistency. Revisit if they object. |
+| Q20 | Folder batches in timer mode? | daemon only | **resolved 2026-10-15:** default accepted (§4.6) |
+| Q21 | How the command is sandboxed | inherits the service sandbox; per-host loosening drop-in | **resolved 2026-10-15:** default accepted (§6.4) |
 
 ## 14. Roadmap (candidate features, not scheduled)
 These items are recorded so the idea and its constraints aren't lost. None are committed to a release. Adopting one requires an ADR, new REQUIREMENTS IDs, catalog events (if any), and a CHANGELOG entry, per AGENTS.md.
@@ -349,4 +411,5 @@ These items are recorded so the idea and its constraints aren't lost. None are c
 | # | Item | Notes / constraints | Status |
 |---|---|---|---|
 | R1 | **Retention for `processed_dir` files.** An optional per-folder `processed_retention_days`. monfile would remove archived originals older than that, logging one event per file (e.g. `PROCESSED_EXPIRED` with path, size, SHA-256). | Today processed files are kept until someone removes them, and monfile never deletes them. Applies only to `processed_dir` contents, never to state or manifests (AR-08 stays). Age should come from the archive time recorded in state, not the file mtime (which is the writer's). Only files monfile itself archived should be removed, matched by state record and SHA-256. Interim option without code: a host-managed systemd-tmpfiles age rule on the processed dir (OPERATIONS §5). | proposed 2026-10-15 |
+| R3 | **Native signing, splitting, and cross-domain hand-off actions**, replacing the external script used for the WSUS batch folder (ADR-0011). | Needs: what the script touches outside the watch folder (keys, outputs, network), what "double sign" means (keys, algorithms; FIPS-approved only), and how parts are reassembled and verified on the far side. | proposed 2026-10-15 |
 | R2 | **Hash/copy I/O rate limiting.** An optional global `hash_max_bytes_per_second` (0 = unlimited) to cap read throughput on busy shared disks. | Originally listed in §3 as optional, but never in the config schema. Must not weaken verification: limit throughput only, never skip reads. | proposed 2026-10-15 |

@@ -48,6 +48,18 @@ monfile[1234]: event=ACTION_OK folder=inbound-a path="/data/inbound/a/report.pdf
 | `DISPOSITION_FAIL` | error | Disposition failed (actions already succeeded) | `mode`, `error` |
 | `FILE_DONE` | info | File fully processed | `sha256`, `actions`, `manifest` (path or none) |
 | `MANIFEST_WRITE_FAIL` | warning | Manifest could not be written (processing result unaffected) | `error` |
-| `RETRY_REQUESTED` | notice | Operator ran `monfile retry` | `user` (uid that ran the command), `sudo_user` (the `SUDO_USER` that invoked it via sudo, or none; informational) |
+| `BATCH_SETTLING` | info | Folder batch (`trigger = "folder"`): new or changed files seen; the quiet window starts (DESIGN §4.6) | `files`, `bytes` |
+| `BATCH_READY` | info | Folder unchanged for `settle_seconds`, files hashed (if `hash_batch`); the command is about to start | `batch`, `files`, `bytes`, `snapshot`, `settled_seconds` |
+| `COMMAND_START` | info | Command started for a batch | `batch`, `program`, `sha256` (of the program), `pid`, `files`, `timeout_seconds` |
+| `COMMAND_OUTPUT` | info | One line printed by the command (stdout and stderr together; escaped, at most 1,000 characters) | `batch`, `n` (line number), `line` |
+| `COMMAND_OUTPUT_TRUNCATED` | warning | The command printed more than 10,000 lines; the rest are not logged | `batch`, `limit` |
+| `COMMAND_BUSY` | info | The command exited with `busy_exit_code` (another job in progress); retried later | `batch`, `exit_code`, `duration_ms`, `output_lines`, `retry_in` |
+| `COMMAND_FAIL` | error | The command exited non-zero, was killed by a signal, or could not be started; the batch is held | `batch`, `exit_code`, `duration_ms`, `output_lines`, `error`, `manifest` |
+| `COMMAND_TIMEOUT` | warning | The command ran past `timeout_seconds` and was stopped (SIGTERM, then SIGKILL after 30 s); the batch is held | `batch`, `exit_code`, `duration_ms`, `output_lines`, `timeout_seconds`, `manifest` |
+| `COMMAND_INTERRUPTED` | warning | The command was stopped by a service stop, or monfile restarted while it was running; the batch settles again | `batch`, `reason`, `pid`, `duration_ms`, `output_lines` |
+| `COMMAND_REFUSED` | error | The program failed its ownership/mode checks (SR-13), or a batch folder was scanned by `scan --once`; nothing was run | `program`, `error` |
+| `BATCH_DONE` | info | The command exited 0 and (with `expect_empty`) the folder is empty | `batch`, `exit_code`, `duration_ms`, `output_lines`, `files`, `remaining`, `manifest` |
+| `BATCH_INCOMPLETE` | warning | The command exited 0 but files are left and `expect_empty = true`; the batch is held | `batch`, `exit_code`, `duration_ms`, `output_lines`, `remaining`, `manifest` |
+| `RETRY_REQUESTED` | notice | Operator ran `monfile retry` (a file, or a held folder batch) | `user` (uid that ran the command), `sudo_user` (the `SUDO_USER` that invoked it via sudo, or none; informational) |
 | `TEMP_CLEANUP` | info | Stale temp file removed at startup | `dest` |
 | `DRY_RUN` | info | Prefixes the action/disposition events in `--dry-run` mode | `would` |

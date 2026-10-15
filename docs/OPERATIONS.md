@@ -21,7 +21,7 @@ sudo ./packaging/install.sh --tarball-sha "$(cut -d' ' -f1 ../SHA256SUMS)"
 `install.sh` checks every file against the tarball's `MANIFEST.sha256` before installing anything, and stops if a file was changed, added, or is a symlink. If fapolicyd is running, trust for `/opt/monfile/` is added automatically (`--no-fapolicyd` skips it, and `--fapolicyd` forces it). Each step is logged to syslog: `journalctl -t monfile-install`. Run `install.sh --help` for all options.
 
 `install.sh` creates the following. See `docs/audit/FILE_INVENTORY.md` for the full list.
-- the `monfile` account
+- the `monfile` account (unless `--run-as USER` names an existing non-root account to use instead; that choice is kept for upgrades, and `--run-as monfile` switches back. See SECURITY.md for the trade-off.)
 - `/opt/monfile`
 - `/etc/monfile/monfile.toml` (only if absent)
 - the systemd units
@@ -39,6 +39,7 @@ sudo ./packaging/install.sh --tarball-sha "$(cut -d' ' -f1 ../SHA256SUMS)"
    # ReadWritePaths=/data/inbound/a /data/outbound/a /data/processed/a
    ```
 4. Validate: `sudo -u monfile /opt/monfile/bin/monfile validate-config`
+5. **Folder batches** (`trigger = "folder"`, DESIGN §4.6): install each `command` program root-owned and not group/world-writable, in root-owned directories (e.g. `/usr/local/libexec/`, `0755`). If it needs network, `/home`, or other writable paths, add a reviewed `monfile.service.d/command.conf` based on `/opt/monfile/docs/examples/command-sandbox.conf`. Remove any cron job that ran the program before. Folder batches need the daemon.
 
 ## 4. Choose a run mode (enable ONE)
 | Mode | Enable | When to prefer |
@@ -54,6 +55,7 @@ journalctl -t monfile -f                       # live audit events
 journalctl -t monfile | grep 'event=ACTION_FAIL'
 /opt/monfile/bin/monfile status                # tracked files and states
 /opt/monfile/bin/monfile retry <folder_id> <rel_path>
+/opt/monfile/bin/monfile retry <folder_id>     # re-run a HELD folder batch
 /opt/monfile/bin/monfile scan --once --dry-run # see what would happen
 ```
 Manifests (if enabled) are in `/var/lib/monfile/manifests/<folder_id>/YYYY/MM/DD/`.
@@ -78,6 +80,9 @@ A deletion made this way is **not** recorded in monfile's audit log.
 | Python files denied on RHEL | fapolicyd trust. `install.sh` adds it if fapolicyd was running at install time. Otherwise, re-run `install.sh`, or run `fapolicyd-cli --file add /opt/monfile/ && fapolicyd-cli --update` |
 | `install.sh`: checksum mismatch or files not in MANIFEST | The extracted tree differs from the release. Delete it, re-verify the tarball with `sha256sum -c SHA256SUMS`, and extract again. |
 | `install.sh`: units stopped and NOT restarted | The upgrade failed after stopping them. Fix the reported error and re-run `install.sh`, or start the listed units by hand. |
+| Folder batch `HELD` | The last run failed, timed out, or left files (`COMMAND_FAIL`, `COMMAND_TIMEOUT`, `BATCH_INCOMPLETE`). Read its `COMMAND_OUTPUT` lines and the batch manifest, fix the cause, then `retry <folder_id>`. It also re-settles by itself when the folder changes. |
+| `COMMAND_REFUSED` | The program or a directory above it isn't root-owned, is group/world-writable, or is a symlink. Or the folder was run by `scan --once` (batches need `monfile.service`). |
+| `COMMAND_INTERRUPTED` | The service stopped (or crashed) during a run. The batch settles again and the program runs again; it must tolerate re-runs. |
 | `INTEGRITY_MISMATCH` | Source modified during copy, or storage fault. The file is FAILED and the source untouched. Investigate, then `retry`. |
 
 ## 7. Upgrade / uninstall

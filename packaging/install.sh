@@ -22,6 +22,9 @@ Options:
   --python PATH           interpreter to use (default: first of python3.12, python3.11,
                           python3 on PATH that is >= 3.11)
   --tarball-sha HEX       SHA-256 of the release tarball, recorded in $PREFIX/VERSION
+  --run-as USER           run the service as this EXISTING, non-root account (and its
+                          primary group) instead of creating '$DEFAULT_SVC_USER' (ADR-0011).
+                          Remembered for upgrades; '--run-as $DEFAULT_SVC_USER' switches back.
   --fapolicyd             add fapolicyd trust even if fapolicyd is not running
   --no-fapolicyd          never add fapolicyd trust (default: add it if fapolicyd is running)
   --allow-unsupported-os  install on an OS other than RHEL 8/9 or Ubuntu 22.04/24.04
@@ -34,6 +37,7 @@ PY_OPT=""
 TARBALL_SHA=""
 FAPOLICYD=auto
 ALLOW_UNSUPPORTED_OS=0
+RUN_AS=""
 
 while (( $# )); do
     case $1 in
@@ -41,6 +45,8 @@ while (( $# )); do
         --python=*)             PY_OPT=${1#*=} ;;
         --tarball-sha)          TARBALL_SHA=${2:?--tarball-sha needs a value}; shift ;;
         --tarball-sha=*)        TARBALL_SHA=${1#*=} ;;
+        --run-as)               RUN_AS=${2:?--run-as needs a user name}; shift ;;
+        --run-as=*)             RUN_AS=${1#*=} ;;
         --fapolicyd)            FAPOLICYD=yes ;;
         --no-fapolicyd)         FAPOLICYD=no ;;
         --allow-unsupported-os) ALLOW_UNSUPPORTED_OS=1 ;;
@@ -142,10 +148,12 @@ preflight() {
     require_systemd
     take_lock
     check_os
+    resolve_account
     [[ -z $TARBALL_SHA || $TARBALL_SHA =~ ^[0-9a-f]{64}$ ]] \
         || die "--tarball-sha must be 64 lowercase hex characters"
     refuse_symlink /opt "$PREFIX" "$PREFIX_NEW" "$PREFIX_OLD" "$CONF_DIR" "$CONF_FILE" \
-        "$STATE_DIR" "$TMPFILES_CONF" "${UNITS[@]/#/$UNIT_DIR/}"
+        "$STATE_DIR" "$TMPFILES_CONF" "${UNITS[@]/#/$UNIT_DIR/}" \
+        "${RUNAS_UNITS[@]/#/$UNIT_DIR/}"
     find_python
     if [[ $FAPOLICYD == auto ]]; then
         if fapolicyd_active; then FAPOLICYD=yes; else FAPOLICYD=no; fi
@@ -206,8 +214,39 @@ verify_and_stage() {
 
 # --- 3. Service account ------------------------------------------------------
 
+# resolve_account: choose SVC_USER/SVC_GROUP. --run-as wins; otherwise keep the account an
+# earlier --run-as install recorded in the drop-in; otherwise the default account.
+resolve_account() {
+    local prev="" uid gid shell
+    if [[ -f $UNIT_DIR/monfile.service.d/$RUNAS_DROPIN ]]; then
+        prev=$(sed -n 's/^User=//p' "$UNIT_DIR/monfile.service.d/$RUNAS_DROPIN")
+    fi
+    if [[ -z $RUN_AS && -n $prev ]]; then
+        RUN_AS=$prev
+        log "keeping run-as account $RUN_AS from the previous install"
+    fi
+    if [[ -z $RUN_AS || $RUN_AS == "$DEFAULT_SVC_USER" ]]; then
+        RUN_AS=""
+        return 0
+    fi
+    [[ $RUN_AS =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]] || die "--run-as: invalid user name: $RUN_AS"
+    getent passwd "$RUN_AS" >/dev/null || die "--run-as: user $RUN_AS does not exist (it is never created)"
+    IFS=: read -r _ _ uid gid _ _ shell < <(getent passwd "$RUN_AS")
+    (( uid != 0 )) || die "--run-as: refusing to run the service as root ($RUN_AS has uid 0)"
+    SVC_USER=$RUN_AS
+    SVC_GROUP=$(getent group "$gid" | cut -d: -f1)
+    [[ -n $SVC_GROUP ]] || die "--run-as: the primary group (gid $gid) of $RUN_AS has no name"
+    log "service account: existing user $SVC_USER (uid $uid, group $SVC_GROUP, shell $shell)"
+    if [[ $shell != */nologin && $shell != */false ]]; then
+        log "note: $SVC_USER is a login account; anyone who can log in as it can alter $STATE_DIR (SECURITY.md)"
+    fi
+}
+
 ensure_account() {
     local nologin uid gid shell group_gid
+    if [[ -n $RUN_AS ]]; then
+        return 0  # an existing account: never created, changed, or removed by monfile
+    fi
     for nologin in /usr/sbin/nologin /sbin/nologin ""; do
         [[ -x $nologin ]] && break
     done
@@ -349,11 +388,20 @@ install_config() {
     if [[ -e $CONF_FILE ]]; then
         read -r owner group mode < <(stat -c '%U %G %a' -- "$CONF_FILE")
         log "keeping existing $CONF_FILE"
+        if [[ $group != "$SVC_GROUP" ]]; then
+            log "changing the group of $CONF_FILE from $group to $SVC_GROUP (service account changed; contents untouched)"
+            run chgrp "$SVC_GROUP" "$CONF_DIR" "$CONF_FILE"
+            group=$SVC_GROUP
+        fi
         [[ $owner:$group:$mode == root:$SVC_GROUP:640 ]] \
             || warn "$CONF_FILE is $owner:$group $mode; expected root:$SVC_GROUP 0640 (monfile will refuse insecure configs)"
     else
         log "installing example config as $CONF_FILE"
         write_file "$CONF_FILE" "root:$SVC_GROUP" 0640 <"$STAGE/config/monfile.example.toml"
+    fi
+    if [[ -d $STATE_DIR && $(stat -c %U -- "$STATE_DIR") != "$SVC_USER" ]]; then
+        log "changing the owner of $STATE_DIR and its contents to $SVC_USER:$SVC_GROUP (service account changed)"
+        run chown -R --no-dereference "$SVC_USER:$SVC_GROUP" "$STATE_DIR"
     fi
     run install -d -o "$SVC_USER" -g "$SVC_GROUP" -m 0750 "$STATE_DIR"
 }
@@ -365,7 +413,20 @@ install_units() {
     for u in "${UNITS[@]}"; do
         write_file "$UNIT_DIR/$u" root:root 0644 <"$STAGE/packaging/systemd/$u"
     done
-    write_file "$TMPFILES_CONF" root:root 0644 <"$STAGE/packaging/tmpfiles.d/monfile.conf"
+    sed "s|^\(d /run/monfile [0-7]*\) $DEFAULT_SVC_USER $DEFAULT_SVC_USER |\1 $SVC_USER $SVC_GROUP |" \
+        "$STAGE/packaging/tmpfiles.d/monfile.conf" | write_file "$TMPFILES_CONF" root:root 0644
+    for u in "${RUNAS_UNITS[@]}"; do
+        if [[ -n $RUN_AS ]]; then
+            run install -d -o root -g root -m 0755 "$UNIT_DIR/$u.d"
+            printf '%s\n' \
+                "# Written by install.sh --run-as (ADR-0011). Do not edit: re-run install.sh --run-as USER." \
+                "[Service]" "User=$SVC_USER" "Group=$SVC_GROUP" \
+                | write_file "$UNIT_DIR/$u.d/$RUNAS_DROPIN" root:root 0644
+        elif [[ -e $UNIT_DIR/$u.d/$RUNAS_DROPIN ]]; then
+            log "removing $UNIT_DIR/$u.d/$RUNAS_DROPIN (back to the $DEFAULT_SVC_USER account)"
+            run rm -f -- "$UNIT_DIR/$u.d/$RUNAS_DROPIN"
+        fi
+    done
     log "installed units: ${UNITS[*]} (none enabled)"
     run systemd-tmpfiles --create "$TMPFILES_CONF"
     run systemctl daemon-reload

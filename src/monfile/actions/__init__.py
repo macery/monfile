@@ -62,10 +62,11 @@ class Action(ABC):
 
 
 def _registry() -> dict[str, type[Action]]:
+    from monfile.actions.command import CommandAction
     from monfile.actions.copy import CopyAction
     from monfile.actions.move import MoveAction
 
-    return {cls.type_name: cls for cls in (CopyAction, MoveAction)}
+    return {cls.type_name: cls for cls in (CopyAction, MoveAction, CommandAction)}
 
 
 def get_action(type_name: str) -> type[Action]:

@@ -33,13 +33,15 @@ The *Verify* column names how each requirement is (or will be) demonstrated: **T
 | FR-19 | Zero-byte files are processed by default. A per-folder `skip_empty` option skips them. | §4.3 | T |
 | FR-20 | Files have no size limit. Files over 10 GiB emit a `FILE_LARGE` warning. | §4.3 | T |
 | FR-21 | A folder can be turned off with `enabled = false` without removing it from the config. A disabled folder is not scanned and its paths are not checked, and its being disabled is logged at startup. | §5 | T |
+| FR-22 | A folder can be settled as a whole (`trigger = "folder"`): it is ready when its listing has not changed for `settle_seconds`, and then one action runs for the whole batch. | §4.6, ADR-0011 | T |
+| FR-23 | A folder batch can run one approved external program (`command` action) with fixed arguments, a timeout, a recognized "busy" exit code, and a check that the folder is empty afterwards. A failed batch is held until the folder changes or an operator retries it. | §4.6, §6.4, ADR-0011 | T |
 
 ## Security
 | ID | Requirement | Design | Verify |
 |---|---|---|---|
-| SR-01 | Run as a dedicated unprivileged service account. Root is never required at runtime. | §9 | I, D |
+| SR-01 | Run as a dedicated unprivileged service account, or an existing non-root account chosen at install (`--run-as`, ADR-0011). Root is never required at runtime. | §9 | I, D |
 | SR-02 | No third-party runtime libraries. Python standard library only. | ADR-0001 | I (import scan) |
-| SR-03 | No shell or external command execution in v1. | §9, ADR-0006 | I, T |
+| SR-03 | No shell execution. The only process monfile starts is a folder batch's `command` program, with an argument list and no shell (SR-13). | §9, ADR-0011 | I, T |
 | SR-04 | Never follow symlinks in watch, destination, or processed paths. | §9 | T |
 | SR-05 | Use only FIPS-approved hashing (SHA-256). | §9 | I, T |
 | SR-06 | Refuse to start if the config file is not root-owned, or is group/world-writable. | §5, §9 | T |
@@ -49,6 +51,7 @@ The *Verify* column names how each requirement is (or will be) demonstrated: **T
 | SR-10 | The systemd unit applies sandboxing and hardening directives. | §9, packaging | I |
 | SR-11 | File contents are never written to logs or manifests. | §9 | I |
 | SR-12 | Delivered files are created with mode `0640`. | §7 | T |
+| SR-13 | A `command` program runs only if, at load and immediately before each run, it is a regular executable file owned by root and not group/world-writable, with no symlink in its path and every directory above it root-owned and not group/world-writable. It gets a fixed environment and a timeout. | §6.4, ADR-0011 | T |
 
 ## Audit
 | ID | Requirement | Design | Verify |
@@ -61,6 +64,7 @@ The *Verify* column names how each requirement is (or will be) demonstrated: **T
 | AR-06 | The repository maintains a third-party inventory for CVE tracking. | THIRD_PARTY.md | I |
 | AR-07 | The repository maintains an installed-file inventory with owners and modes. | FILE_INVENTORY.md | I |
 | AR-08 | monfile never prunes state records or deletes manifests. Retention is indefinite. | §8 | T, I |
+| AR-09 | Each `command` run is recorded with the program's SHA-256, the batch's files (with SHA-256 when `hash_batch` is on), start and end times, exit code, outcome, and every output line (capped). | §4.6, §6.4 | T |
 
 ## Operational / platform
 | ID | Requirement | Design | Verify |

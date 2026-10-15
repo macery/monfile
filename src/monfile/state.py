@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2 added the batch tables (folder trigger mode, ADR-0011)
 LOCK_PATH = Path("/run/monfile/monfile.lock")
 
 _FILE_COLUMNS = """
@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS notices (
     folder_id TEXT NOT NULL, rel_path BLOB NOT NULL, kind TEXT NOT NULL,
     PRIMARY KEY (folder_id, rel_path, kind));
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS batch_folders (
+    folder_id TEXT PRIMARY KEY, status TEXT NOT NULL, snapshot TEXT NOT NULL, since REAL NOT NULL,
+    files INTEGER NOT NULL, bytes INTEGER NOT NULL, retry_at REAL, batch_id TEXT, updated_at REAL);
+CREATE TABLE IF NOT EXISTS batches (
+    batch_id TEXT PRIMARY KEY, folder_id TEXT NOT NULL, snapshot TEXT NOT NULL, files INTEGER NOT NULL,
+    bytes INTEGER NOT NULL, program BLOB NOT NULL, program_sha256 TEXT, pid INTEGER, started REAL,
+    finished REAL, exit_code INTEGER, outcome TEXT, output_lines INTEGER, error TEXT);
+CREATE TABLE IF NOT EXISTS batch_files (
+    batch_id TEXT NOT NULL, rel_path BLOB NOT NULL, size INTEGER, mtime_ns INTEGER, sha256 TEXT,
+    PRIMARY KEY (batch_id, rel_path));
 """
 
 
@@ -77,6 +87,48 @@ _FIELD_NAMES = [f.name for f in fields(FileRecord)]
 
 
 @dataclass(frozen=True)
+class BatchFolder:
+    """Settle/run state of a folder with trigger = "folder" (DESIGN §4.6)."""
+
+    folder_id: str
+    status: str  # IDLE | SETTLING | RUNNING | PENDING | HELD
+    snapshot: str  # SHA-256 over the folder listing; "" when empty
+    since: float  # when this snapshot was first seen (SETTLING) or the status was set
+    files: int = 0
+    bytes: int = 0
+    retry_at: float | None = None  # PENDING: earliest time to start
+    batch_id: str | None = None  # the current or last run
+    updated_at: float = 0.0
+
+    def with_(self, **changes: object) -> BatchFolder:
+        return replace(self, **changes)  # type: ignore[arg-type]
+
+
+_BATCH_FOLDER_FIELDS = [f.name for f in fields(BatchFolder)]
+
+
+@dataclass(frozen=True)
+class BatchRecord:
+    batch_id: str
+    folder_id: str
+    snapshot: str
+    files: int
+    bytes: int
+    program: str
+    program_sha256: str | None
+    pid: int | None = None
+    started: float | None = None
+    finished: float | None = None
+    exit_code: int | None = None
+    outcome: str | None = None  # DONE | INCOMPLETE | FAIL | TIMEOUT | BUSY | INTERRUPTED; None while running
+    output_lines: int = 0
+    error: str | None = None
+
+
+_BATCH_FIELDS = [f.name for f in fields(BatchRecord)]
+
+
+@dataclass(frozen=True)
 class ActionRecord:
     action_index: int
     action_type: str
@@ -111,6 +163,8 @@ class StateStore:
             if row is None:
                 self.db.execute("INSERT INTO meta VALUES ('schema_version', ?), ('created_at', ?)",
                                 (str(SCHEMA_VERSION), str(time.time())))
+            elif int(row[0]) == 1:  # the CREATE statements above added the batch tables
+                self.db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
             elif int(row[0]) != SCHEMA_VERSION:
                 raise RuntimeError(f"{db_path}: schema version {row[0]} is not supported (expected {SCHEMA_VERSION})")
 
@@ -185,6 +239,42 @@ class StateStore:
             "INSERT OR REPLACE INTO action_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (folder_id, _enc(rel_path), source_key, rec.action_index, rec.action_type, int(rec.ok), dest,
              rec.dest_sha256, rec.bytes, rec.started, rec.finished, rec.error))
+
+    # --- folder batches (ADR-0011) ----------------------------------------------------
+
+    def get_batch_folder(self, folder_id: str) -> BatchFolder | None:
+        row = self.db.execute(f"SELECT {', '.join(_BATCH_FOLDER_FIELDS)} FROM batch_folders WHERE folder_id=?",
+                              (folder_id,)).fetchone()
+        return BatchFolder(*row) if row else None
+
+    def batch_folders(self) -> list[BatchFolder]:
+        rows = self.db.execute(f"SELECT {', '.join(_BATCH_FOLDER_FIELDS)} FROM batch_folders ORDER BY folder_id")
+        return [BatchFolder(*r) for r in rows]
+
+    def put_batch_folder(self, bf: BatchFolder) -> None:
+        bf = bf.with_(updated_at=time.time())
+        values = [getattr(bf, n) for n in _BATCH_FOLDER_FIELDS]
+        self.db.execute(f"INSERT OR REPLACE INTO batch_folders ({', '.join(_BATCH_FOLDER_FIELDS)}) "
+                        f"VALUES ({', '.join('?' * len(values))})", values)
+
+    def get_batch(self, batch_id: str) -> BatchRecord | None:
+        row = self.db.execute(f"SELECT {', '.join(_BATCH_FIELDS)} FROM batches WHERE batch_id=?", (batch_id,)).fetchone()
+        if row is None:
+            return None
+        values = list(row)
+        values[5] = _dec(values[5])
+        return BatchRecord(*values)
+
+    def put_batch(self, rec: BatchRecord) -> None:
+        values: list[object] = [getattr(rec, n) for n in _BATCH_FIELDS]
+        values[5] = _enc(rec.program)
+        self.db.execute(f"INSERT OR REPLACE INTO batches ({', '.join(_BATCH_FIELDS)}) "
+                        f"VALUES ({', '.join('?' * len(values))})", values)
+
+    def put_batch_files(self, batch_id: str, entries: list[tuple[str, int, int, str | None]]) -> None:
+        """Record the files a run was started on: (rel_path, size, mtime_ns, sha256)."""
+        self.db.executemany("INSERT OR REPLACE INTO batch_files VALUES (?, ?, ?, ?, ?)",
+                            [(batch_id, _enc(p), size, mtime, sha) for p, size, mtime, sha in entries])
 
     # --- once-per-path notices -----------------------------------------------------
 

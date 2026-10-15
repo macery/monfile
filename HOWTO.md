@@ -54,6 +54,8 @@ The installer:
 - adds fapolicyd trust automatically on RHEL hosts where fapolicyd is running
 - logs each step to syslog (`journalctl -t monfile-install`)
 
+If site policy forbids creating a new account, `--run-as USER` runs the service as an **existing** non-root account instead (for example one that already holds the permissions the service needs). The installer remembers the choice for later upgrades. Read the trade-off in SECURITY.md first: anyone who can log in as that account can alter monfile's local records, so your forwarded syslog becomes the record to trust. In the rest of this guide, replace `monfile` in `sudo -u monfile` and in the ACLs with that account and its group.
+
 Running a newer release's `install.sh` upgrades in place. It restarts whatever was running and keeps your config and state.
 
 Every installed path is listed in [docs/audit/FILE_INVENTORY.md](docs/audit/FILE_INVENTORY.md).
@@ -228,6 +230,31 @@ enabled = false                 # default true; the block is still syntax-checke
 ```
 Restart the service to apply it. Startup logs `FOLDER_DISABLED` for the folder. Files already tracked keep their state. To resume, set it back to `true` (or remove the line) and restart.
 
+### Run a program once a whole folder has settled (folder batch)
+For a sender that delivers a **set** of files that belong together, and an approved program that processes the set and empties the folder:
+```toml
+[[folder]]
+id             = "wsus-xfer"
+path           = "/data/wsus/in"
+trigger        = "folder"               # settle the whole folder, not each file
+recursive      = true
+settle_seconds = 900                    # 15 minutes with no change anywhere in the folder
+manifest       = true
+
+  [[folder.action]]
+  type            = "command"
+  program         = "/usr/local/libexec/wsus-xfer.sh"
+  timeout_seconds = 7200
+  busy_exit_code  = 75                  # the program's "already running" exit code, if it has one
+```
+Before you enable it:
+1. **Make the program root-owned and read-only to everyone else**, in a root-owned directory: `sudo install -o root -g root -m 0755 wsus-xfer.sh /usr/local/libexec/`. monfile refuses to run it otherwise (`COMMAND_REFUSED`), and checks again before every run.
+2. **Check what it needs from the sandbox.** It runs as the service account with no network, no `/home`, and no `sudo`, and can only write to `ReadWritePaths=`. The syscall filter also kills it if it calls `chown`, `setrlimit` or `nice`, which gpg, `rsync -a` and `cp -p` do (`COMMAND_FAIL error="killed by SIGSYS"`). If it needs more, start from `/opt/monfile/docs/examples/command-sandbox.conf` and keep only the lines it needs.
+3. **Remove any cron job** that ran it before.
+4. Use the daemon (`monfile.service`); folder batches don't run from the timer.
+
+What you'll see: `BATCH_SETTLING` when files arrive, `BATCH_READY` and `COMMAND_START` once the folder has been quiet for `settle_seconds`, a `COMMAND_OUTPUT` line for everything the program prints, then `BATCH_DONE` if it exits 0 and the folder is empty. If it fails (`COMMAND_FAIL`, `COMMAND_TIMEOUT`, `BATCH_INCOMPLETE`), monfile waits until the folder changes or you run `sudo -u monfile /opt/monfile/bin/monfile retry wsus-xfer`. `status` shows each batch folder's state and last run.
+
 ### Add a second folder
 Add another `[[folder]]` block with a unique `id`, then:
 1. Add its writable folders to `ReadWritePaths=`.
@@ -242,6 +269,7 @@ Add another `[[folder]]` block with a unique `id`, then:
 | Show failures | `journalctl -t monfile \| grep -E 'event=(ACTION_FAIL\|INTEGRITY_MISMATCH\|DISPOSITION_FAIL)'` |
 | List tracked files and their states | `sudo -u monfile /opt/monfile/bin/monfile status` |
 | Retry a failed file after fixing the cause | `sudo -u monfile /opt/monfile/bin/monfile retry <folder_id> <path relative to the watch folder>` |
+| Re-run a failed folder batch | `sudo -u monfile /opt/monfile/bin/monfile retry <folder_id>` |
 | Apply a config change | `validate-config`, then `sudo systemctl restart monfile.service` (or `monfile-scan.timer`) |
 
 Things to know:
@@ -259,6 +287,7 @@ monfile alerts only through syslog. Set up SIEM alerts on these events:
 - `DISPOSITION_FAIL`
 - `PERMISSION_DENIED`
 - `CONFIG_INVALID`
+- for folder batches: `COMMAND_FAIL`, `COMMAND_TIMEOUT`, `COMMAND_REFUSED`, `BATCH_INCOMPLETE`
 
 `MARKER_ORPHAN` and `FILE_LARGE` are worth a lower-priority alert. The full event list is in [docs/audit/AUDIT_EVENTS.md](docs/audit/AUDIT_EVENTS.md).
 
@@ -269,5 +298,7 @@ monfile alerts only through syslog. Set up SIEM alerts on these events:
 | File never processed | Is its name excluded? Is it still changing (`FILE_CHANGED_DURING_SETTLE`)? Is it a symlink (`SYMLINK_REJECTED`)? Is a `ready_marker` missing? Run `status`. |
 | `PERMISSION_DENIED` | The ACLs from section 4.1, the `ReadWritePaths=` drop-in, and SELinux denials (`ausearch -m avc -ts recent`) |
 | Service won't start | `journalctl -u monfile.service`. Look for `CONFIG_INVALID` or `CONFIG_PERMS_INSECURE`. |
+| Folder batch never runs | `status` shows its state. `SETTLING` means something is still changing; `HELD` means the last run failed (see its `COMMAND_*` events) and it waits for a change or `retry`. `COMMAND_REFUSED` means the program's owner or mode is wrong. |
+| Batch program fails under monfile but works by hand | It's the sandbox: no network, no `/home`, no `sudo`, read-only outside `ReadWritePaths=`. Its `COMMAND_OUTPUT` lines usually say which. See the batch recipe in section 7. |
 
 More is in [docs/OPERATIONS.md §6](docs/OPERATIONS.md). For upgrades and uninstalling, see OPERATIONS §7.

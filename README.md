@@ -11,6 +11,7 @@ Built for STIG-managed RHEL 8/9 and Ubuntu 22.04/24.04 hosts. Python 3.11+, stan
 - Stability detection: size + mtime unchanged for the settle window, **and** a SHA-256 match at the start and end of the window
 - Built-in actions: `copy` and `move`, with SHA-256 integrity verification of the delivered file
 - Source disposition per folder: `leave`, `move` (to a processed dir), or `delete`
+- Folder batches: wait until a whole folder has settled, then run one approved, root-owned program for the batch, with a timeout and every output line logged
 - Audit events to syslog/journald, plus optional per-file JSON manifests
 - Runs as a systemd daemon (`monfile run`) or a systemd timer/cron job (`monfile scan --once`)
 

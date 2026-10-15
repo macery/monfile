@@ -1,6 +1,6 @@
 # ADR-0006: Built-in actions only; no external command execution in v1
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0011](0011-folder-batches-command-action.md) (2026-10-15)
 - **Date:** 2026-10-12
 
 ## Context

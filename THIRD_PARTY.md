@@ -23,10 +23,11 @@ Its purpose is CVE monitoring and audit evidence on STIG-managed hosts.
 ### Python standard library modules used
 These modules ship with CPython, so they are covered by the CPython row above. They are listed so reviewers can map CPython CVEs to their impact on monfile.
 
-`argparse, dataclasses, enum, fcntl, fnmatch, hashlib, json, logging, logging.handlers, os, pathlib, re, secrets, signal, socket, sqlite3, stat, sys, time, datetime, tomllib, typing, abc, contextlib`
-(tests only: `unittest, tempfile, subprocess, shutil, tarfile`; `tests/test_packaging.py` runs `bash -n` and `build-tarball.sh` without a shell)
+`abc, argparse, collections, collections.abc, contextlib, dataclasses, enum, errno, fcntl, fnmatch, hashlib, json, logging, logging.handlers, os, pathlib, pwd, re, secrets, signal, socket, sqlite3, stat, subprocess, sys, threading, time, tomllib, typing`
+(`subprocess` is used only by the folder-batch `command` action, `shell=False`, ADR-0011.)
+(tests only: `unittest, unittest.mock, tempfile, io, shutil, tarfile`; `tests/test_packaging.py` runs `bash -n` and `build-tarball.sh` without a shell)
 
-> Keep this list in sync with `grep -rhoE "^(import|from) [a-z_.]+" src/ | sort -u`.
+> Keep this list in sync with `grep -rhoE "^(import|from) [a-z0-9_.]+" src/ | sort -u`.
 
 ## 2. Install-time tools (used by `install.sh` on target hosts)
 

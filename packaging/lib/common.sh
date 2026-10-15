@@ -11,8 +11,12 @@ readonly STATE_DIR=/var/lib/monfile
 readonly UNIT_DIR=/etc/systemd/system
 readonly TMPFILES_CONF=/etc/tmpfiles.d/monfile.conf
 readonly UNITS=(monfile.service monfile-scan.service monfile-scan.timer)
-readonly SVC_USER=monfile
-readonly SVC_GROUP=monfile
+readonly DEFAULT_SVC_USER=monfile
+readonly RUNAS_UNITS=(monfile.service monfile-scan.service)
+readonly RUNAS_DROPIN=10-run-as.conf      # $UNIT_DIR/<unit>.d/$RUNAS_DROPIN, written by install.sh --run-as
+# The service account. install.sh may switch these to an existing account (--run-as, ADR-0011).
+SVC_USER=$DEFAULT_SVC_USER
+SVC_GROUP=$DEFAULT_SVC_USER
 readonly SYSLOG_TAG=monfile-install
 
 DRY_RUN=0

@@ -51,6 +51,18 @@ class EventID(enum.StrEnum):
     DISPOSITION_FAIL = "DISPOSITION_FAIL"
     FILE_DONE = "FILE_DONE"
     MANIFEST_WRITE_FAIL = "MANIFEST_WRITE_FAIL"
+    BATCH_SETTLING = "BATCH_SETTLING"
+    BATCH_READY = "BATCH_READY"
+    COMMAND_START = "COMMAND_START"
+    COMMAND_OUTPUT = "COMMAND_OUTPUT"
+    COMMAND_OUTPUT_TRUNCATED = "COMMAND_OUTPUT_TRUNCATED"
+    COMMAND_BUSY = "COMMAND_BUSY"
+    COMMAND_FAIL = "COMMAND_FAIL"
+    COMMAND_TIMEOUT = "COMMAND_TIMEOUT"
+    COMMAND_INTERRUPTED = "COMMAND_INTERRUPTED"
+    COMMAND_REFUSED = "COMMAND_REFUSED"
+    BATCH_DONE = "BATCH_DONE"
+    BATCH_INCOMPLETE = "BATCH_INCOMPLETE"
     RETRY_REQUESTED = "RETRY_REQUESTED"
     TEMP_CLEANUP = "TEMP_CLEANUP"
     DRY_RUN = "DRY_RUN"
@@ -96,13 +108,25 @@ SEVERITY: dict[EventID, str] = {
     EventID.DISPOSITION_FAIL: "error",
     EventID.FILE_DONE: "info",
     EventID.MANIFEST_WRITE_FAIL: "warning",
+    EventID.BATCH_SETTLING: "info",
+    EventID.BATCH_READY: "info",
+    EventID.COMMAND_START: "info",
+    EventID.COMMAND_OUTPUT: "info",
+    EventID.COMMAND_OUTPUT_TRUNCATED: "warning",
+    EventID.COMMAND_BUSY: "info",
+    EventID.COMMAND_FAIL: "error",
+    EventID.COMMAND_TIMEOUT: "warning",
+    EventID.COMMAND_INTERRUPTED: "warning",
+    EventID.COMMAND_REFUSED: "error",
+    EventID.BATCH_DONE: "info",
+    EventID.BATCH_INCOMPLETE: "warning",
     EventID.RETRY_REQUESTED: "notice",
     EventID.TEMP_CLEANUP: "info",
     EventID.DRY_RUN: "info",
 }
 
 # Keys whose values are always quoted (paths and free text).
-_QUOTED_KEYS = {"path", "same_as", "dest", "target", "marker", "config", "error", "manifest", "lock", "python"}
+_QUOTED_KEYS = {"path", "same_as", "dest", "target", "marker", "config", "error", "manifest", "lock", "python", "program", "line"}
 
 log = logging.getLogger("monfile")
 log.propagate = False
@@ -214,14 +238,21 @@ def _safe_name(name: str, limit: int = 100) -> str:
     return cleaned[:limit] or "_"
 
 
-def write_manifest(manifest_dir: Path, folder_id: str, record: dict[str, Any], *, now: float | None = None) -> Path:
-    """Write the manifest JSON atomically. Layout is in DESIGN §10.2."""
+def write_manifest(manifest_dir: Path, folder_id: str, record: dict[str, Any], *, now: float | None = None,
+                   label: tuple[str, str] | None = None) -> Path:
+    """Write the manifest JSON atomically. Layout is in DESIGN §10.2.
+
+    The file name is <UTC time>_<12 hex>_<name>.json. By default the hex and name come from the
+    record's source; label=(hex, name) overrides them (batch manifests).
+    """
     now = time.time() if now is None else now
     t = time.gmtime(now)
     day_dir = manifest_dir / folder_id / f"{t.tm_year:04d}" / f"{t.tm_mon:02d}" / f"{t.tm_mday:02d}"
     day_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
-    sha = (record.get("source", {}).get("sha256") or "nohash")[:12]
-    base = _safe_name(os.path.basename(record.get("source", {}).get("path", "file")))
+    if label is None:
+        label = (record.get("source", {}).get("sha256") or "nohash",
+                 os.path.basename(record.get("source", {}).get("path", "file")))
+    sha, base = label[0][:12], _safe_name(label[1])
     name = f"{time.strftime('%Y%m%dT%H%M%S', t)}{int(now % 1 * 1000):03d}Z_{sha}_{base}.json"
     final = day_dir / name
     tmp = day_dir / f".monfile-tmp-{secrets.token_hex(8)}"
