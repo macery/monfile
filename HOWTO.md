@@ -3,7 +3,7 @@
 This guide takes you from a downloaded release to a working watch folder, then covers everyday use.
 For reference material, see [docs/OPERATIONS.md](docs/OPERATIONS.md) (troubleshooting, upgrades), [config/monfile.example.toml](config/monfile.example.toml) (every config option) and [DESIGN.md](DESIGN.md) (how it works).
 
-> **Status (0.2, in development):** the program is implemented and unit-tested, but not yet field-tested on every target platform. Please report anything in this guide that doesn't match what you see.
+> **Status (0.2.0):** the program is implemented, unit-tested, and manually tested on Ubuntu 24.04. It has not yet been tested on RHEL 8/9 or Ubuntu 22.04. Please report anything in this guide that doesn't match what you see.
 
 ---
 

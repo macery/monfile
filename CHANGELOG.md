@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+First working release: monfile now processes files. It has been manually tested on Ubuntu 24.04, but not yet on RHEL 8/9 or Ubuntu 22.04.
+
 ### Added
 - `install.sh` is implemented (ADR-0010). It verifies every file against the tarball's new `MANIFEST.sha256` in a private staging dir; creates the `monfile` account; installs `/opt/monfile` with precompiled bytecode, the config (only if absent), the state dir, and the systemd units; and smoke-tests the launcher as `monfile`. Options: `--python`, `--tarball-sha`, `--fapolicyd`/`--no-fapolicyd`, `--allow-unsupported-os`, `--dry-run`.
 - Upgrades in place: the running units are stopped, the new tree is swapped in, and the units that were running are started again. Config, state, and enablement are left unchanged.

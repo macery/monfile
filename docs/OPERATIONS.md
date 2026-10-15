@@ -1,6 +1,6 @@
 # Operations Guide
 
-> 0.2 in development: implemented and unit-tested, but not yet field-tested on every target platform.
+> 0.2.0: implemented, unit-tested, and manually tested on Ubuntu 24.04. It has not yet been tested on RHEL 8/9 or Ubuntu 22.04.
 
 ## 1. Prerequisites
 | OS | Install Python |

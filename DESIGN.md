@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **v0.2 (in development)**: core implemented (scan, settle, copy/move, dispositions, markers, audit, manifests, CLI); awaiting field testing |
+| Status | **v0.2.0**: core implemented (scan, settle, copy/move, dispositions, markers, audit, manifests, CLI); manually tested on Ubuntu 24.04, not yet on RHEL 8/9 or Ubuntu 22.04 |
 | Created | 2026-10-12 |
 | Targets | RHEL 8/9, Ubuntu 22.04/24.04 (STIG-managed) |
 | Runtime | Python ≥ 3.11, standard library only |
