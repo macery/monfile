@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+Adds a per-folder `enabled` switch and ships the example folders disabled. The core is unchanged from 0.2.0; the new switch is covered by unit tests. Manually tested on Ubuntu 24.04, but not yet on RHEL 8/9 or Ubuntu 22.04.
+
 ### Added
 - Per-folder `enabled = true|false` (default `true`, FR-21). A disabled folder stays in the config and is still schema-checked, but it isn't scanned and its directories needn't exist. The service logs the new `FOLDER_DISABLED` event (notice) for each one at startup, `CONFIG_LOADED` gains a `disabled` count, `validate-config` lists disabled folders, and `retry` refuses them with an explanation.
 

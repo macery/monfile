@@ -4,7 +4,7 @@ Watches one or more folders on Linux hosts. When a file has been **unchanged for
 
 Built for STIG-managed RHEL 8/9 and Ubuntu 22.04/24.04 hosts. Python 3.11+, standard library only.
 
-> **Status:** 0.2.0. The core is implemented, unit-tested, and manually tested on Ubuntu 24.04: scanning, settle detection, copy/move with verification, dispositions, ready markers, audit events, manifests, and the CLI. It has not yet been tested on RHEL 8/9 or Ubuntu 22.04.
+> **Status:** 0.3.0. The core is implemented, unit-tested, and manually tested on Ubuntu 24.04: scanning, settle detection, copy/move with verification, dispositions, ready markers, audit events, manifests, and the CLI. It has not yet been tested on RHEL 8/9 or Ubuntu 22.04.
 
 ## Features
 - Multiple watch folders, each with its own settle time, filters, recursion setting, and action chain
