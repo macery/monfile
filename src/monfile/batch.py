@@ -151,6 +151,8 @@ class BatchManager:
         run = self.runs.get(folder.id)
         if run is None:
             return False
+        if self.stop.is_set():
+            return True  # stopping: systemd signals the program too; shutdown() records it as interrupted
         rc = run.proc.poll()
         if rc is not None:
             self._finish(folder, run, rc, now)

@@ -238,6 +238,19 @@ class TestBatchRuns(BatchCase):
         batch = r.store.get_batch(r.store.get_batch_folder("t").batch_id)
         self.assertEqual(batch.outcome, "INTERRUPTED")
 
+    def test_program_killed_during_stop_is_interrupted(self) -> None:
+        r = self.runner(self.batch_folder(self.program("sleep 30")))
+        self.write("a.cab")
+        for t in (0, 1, 2):
+            r.run_cycle(now=t)
+        r.batches.runs["t"].proc.terminate()  # systemd signals the whole cgroup on stop
+        r.batches.runs["t"].proc.wait()
+        r.stop.set()
+        r.run_folder(r.cfg.folders[0], 3)  # a cycle already under way when the stop arrived
+        r.batches.shutdown("service stop")
+        self.assertNotIn("COMMAND_FAIL", self.cap.events())
+        self.assertIn("COMMAND_INTERRUPTED", self.cap.events())
+
     def test_restart_after_crash_marks_interrupted(self) -> None:
         r = self.runner(self.batch_folder(self.program("sleep 30")))
         self.write("a.cab")
